@@ -31,7 +31,7 @@ $blockedExact = [
     '/license',
 ];
 
-$blockedPrefix = ['/.git', '/src/', '/node_modules/', '/.env'];
+$blockedPrefix = ['/.git', '/src/', '/node_modules/', '/.env', '/var/', '/tests/', '/.github/'];
 
 if (in_array($normalized, $blockedExact, true)) {
     require_once __DIR__ . '/bootstrap.php';

@@ -4,10 +4,11 @@ declare(strict_types=1);
 require_once __DIR__ . '/bootstrap.php';
 
 header('Content-Type: application/json; charset=utf-8');
-header('Cache-Control: no-store, private');
+app_no_store_headers();
 header('X-Content-Type-Options: nosniff');
 
 const APP_SENSITIVE_TOOLS = ['hash', 'base64', 'encryption'];
+const APP_RATE_LIMITED_TOOLS = ['hash', 'encryption', 'password', 'secret', 'uuid'];
 
 function out(array $payload, int $status = 200): never
 {
@@ -23,10 +24,7 @@ function out(array $payload, int $status = 200): never
 
     unset($payload['ok'], $payload['tool'], $payload['data'], $payload['error']);
 
-    echo json_encode(
-        array_merge($envelope, $payload),
-        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
-    );
+    echo app_json_encode(array_merge($envelope, $payload));
     exit;
 }
 
@@ -42,16 +40,21 @@ function ok(string $tool, array $data): never
 
 function fail(string $message, int $status = 400, ?string $tool = null): never
 {
-    if ($status === 405 && !headers_sent()) {
-        header('Allow: POST');
-    }
-
     out([
         'ok' => false,
         'tool' => $tool,
         'data' => null,
         'error' => $message,
     ], $status);
+}
+
+function reject_method(string $tool, array $allowed, string $message): never
+{
+    if (!headers_sent()) {
+        header('Allow: ' . implode(', ', $allowed));
+    }
+
+    fail($message, 405, $tool !== '' ? $tool : null);
 }
 
 function request_tool(): string
@@ -70,11 +73,27 @@ function require_post(string $tool): void
         return;
     }
 
-    fail(
-        'This endpoint requires POST. Do not send secrets or plaintext in query strings.',
-        405,
-        $tool
+    reject_method(
+        $tool,
+        ['POST'],
+        'This endpoint requires POST. Do not send secrets or plaintext in query strings.'
     );
+}
+
+function require_http_method(string $tool): void
+{
+    $method = request_method();
+
+    if (in_array($tool, APP_SENSITIVE_TOOLS, true)) {
+        require_post($tool);
+        return;
+    }
+
+    if (in_array($method, ['GET', 'POST', 'HEAD'], true)) {
+        return;
+    }
+
+    reject_method($tool, ['GET', 'POST'], 'Method not allowed');
 }
 
 function assert_size(string $value, string $name = 'input'): void
@@ -91,9 +110,12 @@ function body_params(): array
         fail('Request body is too large', 413);
     }
 
-    $contentType = strtolower((string) ($_SERVER['CONTENT_TYPE'] ?? ''));
+    $contentType = strtolower(trim((string) ($_SERVER['CONTENT_TYPE'] ?? '')));
+    $contentType = str_contains($contentType, ';')
+        ? trim(explode(';', $contentType, 2)[0])
+        : $contentType;
 
-    if (str_contains($contentType, 'application/json')) {
+    if ($contentType === 'application/json') {
         $raw = (string) file_get_contents('php://input');
         if (strlen($raw) > APP_MAX_INPUT_BYTES + 4096) {
             fail('Request body is too large', 413);
@@ -102,12 +124,26 @@ function body_params(): array
             return [];
         }
 
+        if (str_contains($raw, "\0")) {
+            fail('Invalid JSON body', 400);
+        }
+
         $decoded = json_decode($raw, true);
-        if (!is_array($decoded)) {
+        if (!is_array($decoded) || array_is_list($decoded)) {
             fail('Invalid JSON body', 400);
         }
 
         return $decoded;
+    }
+
+    $tool = request_tool();
+    $formTypes = ['', 'application/x-www-form-urlencoded', 'multipart/form-data'];
+    if (in_array($contentType, $formTypes, true)) {
+        return $_POST;
+    }
+
+    if (in_array($tool, APP_SENSITIVE_TOOLS, true)) {
+        fail('Content-Type must be application/json or application/x-www-form-urlencoded', 415, $tool);
     }
 
     return $_POST;
@@ -141,7 +177,27 @@ function param(string $key, string $fallback = ''): string
 {
     $params = request_params();
 
-    return isset($params[$key]) ? (string) $params[$key] : $fallback;
+    if (!array_key_exists($key, $params)) {
+        return $fallback;
+    }
+
+    $value = $params[$key];
+    if (is_bool($value)) {
+        $value = $value ? '1' : '0';
+    } elseif (is_int($value) || is_float($value)) {
+        if (is_float($value) && (is_nan($value) || is_infinite($value) || $value !== floor($value))) {
+            fail("Parameter {$key} must be a string or integer", 400, request_tool() ?: null);
+        }
+        $value = (string) $value;
+    } elseif (!is_string($value)) {
+        fail("Parameter {$key} must be a string", 400, request_tool() ?: null);
+    }
+
+    if (str_contains($value, "\0")) {
+        fail("Parameter {$key} contains invalid characters", 400, request_tool() ?: null);
+    }
+
+    return $value;
 }
 
 function inputValue(): string
@@ -167,17 +223,30 @@ function boolParam(string $key, bool $default = true): bool
 {
     $params = request_params();
 
-    if (!isset($params[$key])) {
+    if (!array_key_exists($key, $params)) {
         return $default;
     }
 
-    $value = strtolower(trim((string) $params[$key]));
+    $value = $params[$key];
+    if (is_bool($value)) {
+        return $value;
+    }
 
-    if (in_array($value, ['1', 'true', 'yes', 'on'], true)) {
+    if (is_int($value) && ($value === 0 || $value === 1)) {
+        return $value === 1;
+    }
+
+    if (!is_string($value) && !is_int($value)) {
+        fail("Parameter {$key} must be a boolean", 400, request_tool() ?: null);
+    }
+
+    $normalized = strtolower(trim((string) $value));
+
+    if (in_array($normalized, ['1', 'true', 'yes', 'on'], true)) {
         return true;
     }
 
-    if (in_array($value, ['0', 'false', 'no', 'off'], true)) {
+    if (in_array($normalized, ['0', 'false', 'no', 'off'], true)) {
         return false;
     }
 
@@ -475,8 +544,15 @@ function decrypt_legacy(string $input, string $secret): string
 
 $tool = request_tool();
 
-if (in_array($tool, APP_SENSITIVE_TOOLS, true)) {
-    require_post($tool);
+if ($tool !== '' && !in_array(request_method(), ['GET', 'POST', 'HEAD'], true)) {
+    $allowed = in_array($tool, APP_SENSITIVE_TOOLS, true) ? ['POST'] : ['GET', 'POST'];
+    reject_method($tool, $allowed, 'Method not allowed');
+}
+
+require_http_method($tool);
+
+if (in_array($tool, APP_RATE_LIMITED_TOOLS, true)) {
+    app_rate_limit_enforce($tool);
 }
 
 if ($tool === 'password') {

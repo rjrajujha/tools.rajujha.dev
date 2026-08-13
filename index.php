@@ -385,7 +385,7 @@ function apiDocs(string $page, array $meta, array $examples): void
       <div class="<?= $result ?>">
         <pre id="output" class="<?= $resultBody ?>" aria-live="polite"></pre>
       </div>
-      <p class="<?= $hint ?>">Runs in your browser. Very complex patterns can freeze the tab; keep patterns short.</p>
+      <p class="<?= $hint ?>">Runs in a Web Worker in your browser. Patterns are limited to 256 characters, test strings to 100,000 characters, and execution is time-bounded so a pathological regex cannot freeze the page.</p>
 
 <?php elseif ($page === 'base64'): ?>
       <label class="<?= $label ?>" for="input">Text</label>

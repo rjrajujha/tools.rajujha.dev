@@ -43,6 +43,13 @@ define('APP_ENC_SALT_BYTES', 16);
 define('APP_ENC_IV_BYTES', 12);
 define('APP_ENC_TAG_BYTES', 16);
 
+/** Absolute safety bounds for rate_limit config. Policy defaults come from config.json. */
+define('APP_RATE_LIMIT_REQUESTS_MIN', 1);
+define('APP_RATE_LIMIT_REQUESTS_MAX', 120);
+define('APP_RATE_LIMIT_WINDOW_MIN', 10);
+define('APP_RATE_LIMIT_WINDOW_MAX', 3600);
+define('APP_RATE_LIMIT_DIR_MAX_FILES', 8000);
+
 function app_debug(): bool
 {
     $env = getenv('APP_DEBUG');
@@ -73,6 +80,14 @@ function app_config_defaults(): array
             'encryption_iterations' => 310000,
             'max_encryption_iterations' => 310000,
         ],
+        'rate_limit' => [
+            'enabled' => true,
+            'requests' => 20,
+            'window_seconds' => 60,
+        ],
+        'client_ip' => [
+            'trust_cloudflare' => false,
+        ],
     ];
 }
 
@@ -92,6 +107,11 @@ function app_positive_int(mixed $value): ?int
     }
 
     return null;
+}
+
+function app_strict_bool(mixed $value): ?bool
+{
+    return is_bool($value) ? $value : null;
 }
 
 function app_normalize_config(array $decoded, array $defaults): ?array
@@ -127,7 +147,47 @@ function app_normalize_config(array $decoded, array $defaults): ?array
         return null;
     }
 
-    $config = [
+    $rateDefaults = $defaults['rate_limit'];
+    if (array_key_exists('rate_limit', $decoded) && !is_array($decoded['rate_limit'])) {
+        return null;
+    }
+    $rateIn = is_array($decoded['rate_limit'] ?? null) ? $decoded['rate_limit'] : [];
+    $rateEnabled = array_key_exists('enabled', $rateIn)
+        ? app_strict_bool($rateIn['enabled'])
+        : $rateDefaults['enabled'];
+    $rateRequests = array_key_exists('requests', $rateIn)
+        ? app_positive_int($rateIn['requests'])
+        : $rateDefaults['requests'];
+    $rateWindow = array_key_exists('window_seconds', $rateIn)
+        ? app_positive_int($rateIn['window_seconds'])
+        : $rateDefaults['window_seconds'];
+
+    if (
+        $rateEnabled === null
+        || $rateRequests === null
+        || $rateWindow === null
+        || $rateRequests < APP_RATE_LIMIT_REQUESTS_MIN
+        || $rateRequests > APP_RATE_LIMIT_REQUESTS_MAX
+        || $rateWindow < APP_RATE_LIMIT_WINDOW_MIN
+        || $rateWindow > APP_RATE_LIMIT_WINDOW_MAX
+    ) {
+        return null;
+    }
+
+    $ipDefaults = $defaults['client_ip'];
+    if (array_key_exists('client_ip', $decoded) && !is_array($decoded['client_ip'])) {
+        return null;
+    }
+    $ipIn = is_array($decoded['client_ip'] ?? null) ? $decoded['client_ip'] : [];
+    $trustCloudflare = array_key_exists('trust_cloudflare', $ipIn)
+        ? app_strict_bool($ipIn['trust_cloudflare'])
+        : $ipDefaults['trust_cloudflare'];
+
+    if ($trustCloudflare === null) {
+        return null;
+    }
+
+    return [
         'author' => $author,
         'version' => $version,
         'security' => [
@@ -136,15 +196,15 @@ function app_normalize_config(array $decoded, array $defaults): ?array
             'encryption_iterations' => $encIter,
             'max_encryption_iterations' => $maxEncIter,
         ],
+        'rate_limit' => [
+            'enabled' => $rateEnabled,
+            'requests' => $rateRequests,
+            'window_seconds' => $rateWindow,
+        ],
+        'client_ip' => [
+            'trust_cloudflare' => $trustCloudflare,
+        ],
     ];
-
-    foreach ($decoded as $key => $value) {
-        if (!array_key_exists($key, $config)) {
-            $config[$key] = $value;
-        }
-    }
-
-    return $config;
 }
 
 function app_config(): array
@@ -185,13 +245,200 @@ function app_security(): array
 function public_client_config(): array
 {
     $security = app_security();
+    $workerPath = APP_ROOT . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'regex-worker.js';
 
     return [
         'bcryptCost' => $security['bcrypt_cost'],
         'maxBcryptCost' => $security['max_bcrypt_cost'],
         'encryptionIterations' => $security['encryption_iterations'],
         'maxEncryptionIterations' => $security['max_encryption_iterations'],
+        'regexWorker' => '/assets/regex-worker.js?v=' . (string) (@filemtime($workerPath) ?: '1'),
     ];
+}
+
+function app_send_security_headers(): void
+{
+    if (headers_sent()) {
+        return;
+    }
+
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: SAMEORIGIN');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    header('Cross-Origin-Opener-Policy: same-origin');
+    header('Cross-Origin-Resource-Policy: same-origin');
+    header(
+        "Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; "
+        . "script-src 'self'; worker-src 'self'; connect-src 'self'; object-src 'none'; "
+        . "base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
+    );
+    header_remove('X-Powered-By');
+
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || ((string) ($_SERVER['SERVER_PORT'] ?? '') === '443');
+    if ($https) {
+        header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+    }
+}
+
+function app_no_store_headers(): void
+{
+    if (headers_sent()) {
+        return;
+    }
+
+    header('Cache-Control: no-store, no-cache, must-revalidate, private');
+    header('Pragma: no-cache');
+    header('CDN-Cache-Control: no-store');
+    header('Surrogate-Control: no-store');
+}
+
+function app_client_ip(): string
+{
+    $remote = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+    $trustCloudflare = app_config()['client_ip']['trust_cloudflare'] === true;
+    if ($trustCloudflare) {
+        $cf = trim((string) ($_SERVER['HTTP_CF_CONNECTING_IP'] ?? ''));
+        if (filter_var($cf, FILTER_VALIDATE_IP)) {
+            return $cf;
+        }
+    }
+
+    if ($remote !== '' && filter_var($remote, FILTER_VALIDATE_IP)) {
+        return $remote;
+    }
+
+    return '0.0.0.0';
+}
+
+function app_rate_limit_dir(): string
+{
+    $env = getenv('APP_RATE_LIMIT_DIR');
+    if (!is_string($env) || $env === '') {
+        $env = (string) ($_SERVER['APP_RATE_LIMIT_DIR'] ?? $_ENV['APP_RATE_LIMIT_DIR'] ?? '');
+    }
+    if ($env !== '' && !str_contains($env, "\0") && !str_contains($env, '..')) {
+        return $env;
+    }
+
+    return APP_ROOT . DIRECTORY_SEPARATOR . 'var' . DIRECTORY_SEPARATOR . 'rate-limit';
+}
+
+function app_rate_limit_maybe_cleanup(string $dir, int $window): void
+{
+    if (random_int(1, 40) !== 1) {
+        return;
+    }
+
+    $files = glob($dir . DIRECTORY_SEPARATOR . '*.json') ?: [];
+    $now = time();
+    $removed = 0;
+
+    foreach ($files as $file) {
+        if ($removed >= 200) {
+            break;
+        }
+        if (!preg_match('/[a-f0-9]{64}\\.json$/', $file)) {
+            continue;
+        }
+        $mtime = @filemtime($file);
+        if ($mtime !== false && ($now - $mtime) > ($window * 2)) {
+            @unlink($file);
+            $removed++;
+        }
+    }
+}
+
+/**
+ * @return array{allowed: bool, retry_after: int, remaining: int}
+ */
+function app_rate_limit_hit(): array
+{
+    $cfg = app_config()['rate_limit'];
+    $limit = $cfg['requests'];
+    $window = $cfg['window_seconds'];
+    $dir = app_rate_limit_dir();
+
+    $open = [
+        'allowed' => true,
+        'retry_after' => $window,
+        'remaining' => $limit,
+    ];
+
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+        return $open;
+    }
+
+    $existing = glob($dir . DIRECTORY_SEPARATOR . '*.json') ?: [];
+    if (count($existing) > APP_RATE_LIMIT_DIR_MAX_FILES) {
+        app_rate_limit_maybe_cleanup($dir, $window);
+        return $open;
+    }
+
+    app_rate_limit_maybe_cleanup($dir, $window);
+
+    $id = hash('sha256', 'rl|' . app_client_ip());
+    $path = $dir . DIRECTORY_SEPARATOR . $id . '.json';
+    $handle = @fopen($path, 'c+');
+    if ($handle === false) {
+        return $open;
+    }
+
+    if (!flock($handle, LOCK_EX)) {
+        fclose($handle);
+        return $open;
+    }
+
+    $raw = stream_get_contents($handle);
+    $data = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
+    $now = time();
+    $start = is_array($data) ? (int) ($data['w'] ?? 0) : 0;
+    $count = is_array($data) ? (int) ($data['c'] ?? 0) : 0;
+
+    if ($start <= 0 || ($now - $start) >= $window) {
+        $start = $now;
+        $count = 0;
+    }
+
+    $count++;
+    $allowed = $count <= $limit;
+    $remaining = max(0, $limit - $count);
+    $retryAfter = max(1, $window - ($now - $start));
+
+    rewind($handle);
+    ftruncate($handle, 0);
+    fwrite($handle, json_encode(['w' => $start, 'c' => $count], JSON_UNESCAPED_SLASHES));
+    fflush($handle);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+
+    return [
+        'allowed' => $allowed,
+        'retry_after' => $retryAfter,
+        'remaining' => $remaining,
+    ];
+}
+
+function app_rate_limit_enforce(string $tool): void
+{
+    $cfg = app_config()['rate_limit'];
+    if ($cfg['enabled'] !== true) {
+        return;
+    }
+
+    $result = app_rate_limit_hit();
+    if ($result['allowed']) {
+        return;
+    }
+
+    if (!headers_sent()) {
+        header('Retry-After: ' . (string) $result['retry_after']);
+        header('X-RateLimit-Limit: ' . (string) $cfg['requests']);
+        header('X-RateLimit-Remaining: 0');
+    }
+
+    json_error_response('Too many requests. Try again shortly.', 429, ['tool' => $tool]);
 }
 
 function health_response(): never
@@ -199,22 +446,18 @@ function health_response(): never
     if (!headers_sent()) {
         http_response_code(200);
         header('Content-Type: application/json; charset=utf-8');
-        header('Cache-Control: no-store, no-cache, must-revalidate, private');
-        header('Pragma: no-cache');
+        app_no_store_headers();
         header('X-Content-Type-Options: nosniff');
     }
 
     $config = app_config();
 
-    echo json_encode(
-        [
-            'status' => 'ok',
-            'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
-            'author' => $config['author'],
-            'version' => $config['version'],
-        ],
-        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
-    );
+    echo app_json_encode([
+        'status' => 'ok',
+        'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
+        'author' => $config['author'],
+        'version' => $config['version'],
+    ]);
     exit;
 }
 
@@ -223,27 +466,38 @@ function esc(string $value): string
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
+function app_json_encode(array $payload): string
+{
+    $json = json_encode(
+        $payload,
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+
+    if (!is_string($json) || $json === '') {
+        return "{\n    \"ok\": false,\n    \"tool\": null,\n    \"data\": null,\n    \"error\": \"Unable to encode response\"\n}";
+    }
+
+    return $json;
+}
+
 function json_error_response(string $message, int $status = 500, array $extra = []): never
 {
     if (!headers_sent()) {
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
-        header('Cache-Control: no-store, private');
+        app_no_store_headers();
         header('X-Content-Type-Options: nosniff');
     }
 
-    echo json_encode(
-        array_merge(
-            [
-                'ok' => false,
-                'tool' => null,
-                'data' => null,
-                'error' => $message,
-            ],
-            $extra
-        ),
-        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
-    );
+    echo app_json_encode(array_merge(
+        [
+            'ok' => false,
+            'tool' => null,
+            'data' => null,
+            'error' => $message,
+        ],
+        $extra
+    ));
     exit;
 }
 
@@ -363,3 +617,4 @@ function register_error_handlers(): void
 }
 
 register_error_handlers();
+app_send_security_headers();

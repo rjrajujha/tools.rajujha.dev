@@ -24,7 +24,11 @@
     ) {
       throw Error('Invalid application config.');
     }
-    return { bcryptCost, maxBcryptCost, encryptionIterations, maxEncryptionIterations };
+    const regexWorker = typeof parsed.regexWorker === 'string' && parsed.regexWorker.startsWith('/assets/regex-worker.js')
+      ? parsed.regexWorker
+      : '/assets/regex-worker.js';
+
+    return { bcryptCost, maxBcryptCost, encryptionIterations, maxEncryptionIterations, regexWorker };
   }
 
   function showToast(message) {
@@ -217,9 +221,15 @@
       },
       body: post ? JSON.stringify(params) : undefined,
     });
-    const data = await response.json();
+    const text = await response.text();
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw Error(response.status === 429 ? 'Too many requests. Try again shortly.' : 'Request failed');
+    }
     if (!response.ok || data.ok === false) {
-      throw Error(data.error || 'Request failed');
+      throw Error(data.error || (response.status === 429 ? 'Too many requests. Try again shortly.' : 'Request failed'));
     }
     return data;
   }
@@ -598,7 +608,55 @@
   }
 
   function initRegex() {
-    const run = () => {
+    const TIMEOUT_MS = 400;
+    const MAX_MATCHES = 200;
+
+    const runLocal = (source, flags, value) => {
+      const pattern = new RegExp(source, flags);
+      if (pattern.global) {
+        const matches = [];
+        for (const match of value.matchAll(pattern)) {
+          matches.push({ match: match[0], index: match.index });
+          if (matches.length >= MAX_MATCHES) break;
+        }
+        return { matches, truncated: matches.length >= MAX_MATCHES };
+      }
+      const match = value.match(pattern);
+      return { matches: match ? [{ match: match[0], index: match.index }] : [], truncated: false };
+    };
+
+    const runInWorker = (source, flags, value) =>
+      new Promise((resolve, reject) => {
+        let worker;
+        try {
+          worker = new Worker(appConfig().regexWorker);
+        } catch {
+          reject(Error('worker unavailable'));
+          return;
+        }
+        const timer = window.setTimeout(() => {
+          worker.terminate();
+          reject(Error('Regex took too long. Simplify the pattern or shorten the test string.'));
+        }, TIMEOUT_MS);
+        worker.onmessage = (event) => {
+          window.clearTimeout(timer);
+          worker.terminate();
+          const payload = event.data;
+          if (payload && payload.ok) {
+            resolve({ matches: payload.matches, truncated: !!payload.truncated });
+            return;
+          }
+          reject(Error(payload && payload.error ? payload.error : 'Invalid regex'));
+        };
+        worker.onerror = () => {
+          window.clearTimeout(timer);
+          worker.terminate();
+          reject(Error('Regex worker failed'));
+        };
+        worker.postMessage({ source, flags, value, maxMatches: MAX_MATCHES });
+      });
+
+    const run = async () => {
       try {
         const source = $('#pattern').value;
         const flags = $('#flags').value;
@@ -612,17 +670,30 @@
         if (value.length > 100000) {
           throw Error('Test string is limited to 100,000 characters.');
         }
-        const pattern = new RegExp(source, flags);
-        const matches = pattern.global
-          ? [...value.matchAll(pattern)].map((match) => ({ match: match[0], index: match.index }))
-          : (() => {
-              const match = value.match(pattern);
-              return match ? [{ match: match[0], index: match.index }] : [];
-            })();
+
+        let result;
+        try {
+          result = await runInWorker(source, flags, value);
+        } catch (error) {
+          if (error instanceof Error && error.message === 'worker unavailable') {
+            result = runLocal(source, flags, value);
+          } else {
+            throw error;
+          }
+        }
 
         setResult(
           $('#output'),
-          JSON.stringify({ valid: true, matched: matches.length > 0, matches }, null, 2)
+          JSON.stringify(
+            {
+              valid: true,
+              matched: result.matches.length > 0,
+              truncated: result.truncated,
+              matches: result.matches,
+            },
+            null,
+            2
+          )
         );
       } catch (error) {
         setResult($('#output'), 'Invalid regex: ' + error.message);

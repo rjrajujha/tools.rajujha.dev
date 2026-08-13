@@ -13,6 +13,7 @@ The app is intentionally small: PHP 8.1+, HTML, compiled CSS, and a single JavaS
 - JSON APIs for scripting, with GET only for safe/read-only work
 - No cookies, accounts, localStorage, sessionStorage, or analytics
 - Security headers, CSP, and blocked access to sensitive files
+- Application-level rate limiting on expensive APIs (20 requests / 60 seconds by default)
 - `/health` for uptime checks
 
 ## Tools
@@ -25,7 +26,7 @@ The app is intentionally small: PHP 8.1+, HTML, compiled CSS, and a single JavaS
 | JSON Decoder | `/json` | Browser only | — |
 | UUID Generator | `/uuid` | Browser Web Crypto + optional API | `GET /api/uuid` |
 | QR Code Generator | `/qr` | Browser only, local library | — |
-| Regex Tester | `/regex` | Browser only | — |
+| Regex Tester | `/regex` | Browser Web Worker | — |
 | Base64 | `/base64` | Browser + optional API | `POST /api/base64` |
 | JWT Decoder | `/jwt` | Browser only | — |
 | User-Agent Parser | `/user-agent` | Browser + optional API | `GET /api/user-agent` |
@@ -41,12 +42,14 @@ index.php          HTML routes and tool pages
 api.php            JSON API
 bootstrap.php      Shared helpers, errors, config, /health
 router.php         Local PHP built-in server only
-config.json        Author, version, and security limits
+config.json        Author, version, security limits, rate-limit policy
 assets/app.js      Client logic
+assets/regex-worker.js  Isolated regex execution
 assets/app.css     Compiled Tailwind
 assets/vendor/     Vendored QR library
 src/input.css      Tailwind source
 .htaccess          Production rewrite rules and security headers
+tests/             Config, rate-limit, and HTTP regression tests
 ```
 
 `bootstrap.php` and `router.php` are not public endpoints. `config.json` is not web-accessible.
@@ -58,7 +61,8 @@ Interactive pages prefer local processing:
 - Password, UUID, Secret: Web Crypto / `crypto.getRandomValues`
 - Hash: Web Crypto for SHA-256/384/512; MD5, SHA-1, bcrypt, and `all` use `POST /api/hash`
 - Encrypt - Decrypt: Web Crypto AES-256-GCM in the browser. The UI never sends plaintext or the secret key to the server. If Web Crypto is unavailable (insecure HTTP, very old browser), the page shows an error instead of falling back to the API. Generate a secret at `/secret`.
-- Timestamp clock, JSON, Regex, JWT, User-Agent, Markdown, Base64 UI, QR: browser-local
+- Timestamp clock, JSON, JWT, User-Agent, Markdown, Base64 UI, QR: browser-local
+- Regex: browser Web Worker with pattern/input limits and a time bound
 - IP: the only tool that must ask the server, because the observed address is a server property
 - Optional JSON APIs do not store data
 
@@ -300,18 +304,46 @@ HTTP 200 JSON, no cache, no HTML:
     "max_bcrypt_cost": 14,
     "encryption_iterations": 310000,
     "max_encryption_iterations": 310000
+  },
+  "rate_limit": {
+    "enabled": true,
+    "requests": 20,
+    "window_seconds": 60
+  },
+  "client_ip": {
+    "trust_cloudflare": false
   }
 }
 ```
 
-This file is site metadata and security-limit configuration. Do not put credentials, API keys, or secrets in it. Web access is denied by `.htaccess` and the local router.
+This file is site metadata and security-limit configuration. Do not put credentials, API keys, or secrets in it. Web access is denied by `.htaccess` and the local router. Unknown keys are ignored.
 
 - `bcrypt_cost` — default bcrypt cost for generation
 - `max_bcrypt_cost` — API security ceiling; requests above this are rejected
 - `encryption_iterations` — default PBKDF2-HMAC-SHA-256 iterations for encrypt
 - `max_encryption_iterations` — API security ceiling; payloads or `iter` values above this are rejected
+- `rate_limit.enabled` — application-level limiter. Missing this key keeps limiting **on**. Set `false` only to opt out explicitly
+- `rate_limit.requests` — max hits per client per window (absolute range 1–120)
+- `rate_limit.window_seconds` — window length (absolute range 10–3600)
+- `client_ip.trust_cloudflare` — when `true`, rate limiting may use `CF-Connecting-IP`. Leave `false` unless the origin accepts traffic only from Cloudflare
 
 `bcrypt_cost` must be `<= max_bcrypt_cost`. `encryption_iterations` must be `<= max_encryption_iterations`. Invalid `config.json` fails safely with a generic error (no filesystem paths or stack traces). If the file is missing, the app uses the same defaults shown above.
+
+## Rate limiting
+
+Default policy: **20 requests per 60 seconds** per client, shared across expensive endpoints:
+
+- `POST /api/hash`
+- `POST /api/encryption`
+- `GET|POST /api/password`
+- `GET|POST /api/secret`
+- `GET|POST /api/uuid`
+
+HTML pages, `/health`, `/api/timestamp`, `/api/ip`, `/api/user-agent`, and `/api/base64` are not application-rate-limited.
+
+Client identity is `REMOTE_ADDR` (hashed on disk). `X-Forwarded-For` and `X-Real-IP` are never used for limiting. Enable `client_ip.trust_cloudflare` only when Cloudflare sits in front of the origin and the origin is not reachable directly. Files live in `var/rate-limit/` (not web-accessible, not committed). The limiter uses exclusive file locks, bounds directory size, and periodically deletes expired files. If the limiter cannot write, it fails open so a full disk does not become a site-wide outage. Over-limit responses are HTTP 429 with `Retry-After` and `Cache-Control: no-store`.
+
+This is defense-in-depth. Cloudflare and the hosting CDN should still rate-limit `/api/*` at the edge. See [CDN and Cloudflare](#cdn-and-cloudflare).
 
 ## Local development
 
@@ -347,12 +379,18 @@ Required on the host:
 
 - `index.php`, `api.php`, `bootstrap.php`
 - `config.json`
-- `assets/app.css`, `assets/app.js`
+- `assets/app.css`, `assets/app.js`, `assets/regex-worker.js`
 - `assets/vendor/qrcode-generator.js`, `assets/vendor/qrcode-generator-utf8.js`
 - `.htaccess`
 - `favicon.svg`, `robots.txt`, `sitemap.xml`, `site.webmanifest`
 
-`.htaccess` forbids web access to `router.php`, `bootstrap.php`, `config.json`, `.git`, `.env`, `src/`, `node_modules/`, and common secret/backup files.
+Do not upload `node_modules/`, `src/` (unless you rebuild CSS on the server), `tests/`, or `.github/`. The process user must be able to create `var/rate-limit/` (mode 0700).
+
+`.htaccess` forbids web access to `router.php`, `bootstrap.php`, `config.json`, `.git`, `.env`, `src/`, `node_modules/`, `var/`, `tests/`, `.github/`, and common secret/backup files.
+
+Enable PHP OPcache in production. `config.json` is read once per process and cached in memory for the request; OPcache removes repeated PHP parse cost. There is no database.
+
+Keep `APP_DEBUG` unset. It is read only from the process environment, never from query parameters.
 
 ## Adding a tool
 
@@ -375,34 +413,55 @@ php -l index.php
 php -l api.php
 php -l router.php
 node --check assets/app.js
+node --check assets/regex-worker.js
 npm run build
+php tests/run.php
 ```
 
-Then, with `php -S 127.0.0.1:8080 router.php`:
+Then:
 
-- `/` and each tool route
-- `/health`
-- `/api/ip`, `/api/uuid`, `/api/password`
-- `POST /api/hash`, `POST /api/base64`, `POST /api/encryption`
-- GET to a sensitive endpoint should be 405
-- a nonsense URL should render the 404 page
-- `config.json` should not be downloadable
+```bash
+php -S 127.0.0.1:8080 router.php
+php tests/http.php
+```
 
-Encryption checks worth running: round trip, Unicode/emoji/JSON/long text, wrong key, modified ciphertext/IV/salt/tag, and two encrypts of the same input (ciphertext must differ).
+`tests/http.php` covers 405 behaviour, malformed JSON, oversized input, invalid types, bcrypt/iteration ceilings, encryption tampering, XSS payloads, rate limiting, and `Cache-Control: no-store` on sensitive responses. OpenSSL must be enabled for encryption cases.
+
+## CDN and Cloudflare
+
+The application is designed to sit behind the hosting CDN and optionally Cloudflare. Repository code cannot configure those products.
+
+**Cache**
+
+- Cache: `/assets/*` (CSS/JS are versioned with `?v=filemtime`; treat them as immutable), `/favicon.svg`, `/robots.txt`, `/sitemap.xml`, `/site.webmanifest`
+- Short TTL is acceptable for HTML tool pages (no user data)
+- Never cache: `/api/*`, `/api.php`, `/health`, or any POST response
+- Sensitive API responses send `Cache-Control: no-store`, `CDN-Cache-Control: no-store`, and `Surrogate-Control: no-store`
+
+**Recommended Cloudflare / hosting settings**
+
+- Proxy only HTTPS to origin; enable HSTS at the edge as well as in `.htaccess`
+- WAF: block obviously malicious paths (`.git`, `.env`, `config.json`, `var/`, `src/`)
+- Rate-limit `/api/hash` and `/api/encryption` more tightly than page views (for example 20–40 req/min per IP)
+- Bot fight / managed challenge on `/api/*` if abuse appears; allow legitimate scripts
+- Do not cache `/api/*` or `/health` even if “cache everything” is enabled
+- Restrict origin to Cloudflare IPs (authenticated origin pull or allowlist) before setting `client_ip.trust_cloudflare` to `true`
+- Access logs on the origin and at Cloudflare may still contain IP addresses and URLs. Sensitive tools already reject GET so secrets are not in query strings; POST bodies should not be logged
 
 ## Security and privacy
 
 - Output is escaped in PHP (`htmlspecialchars`). Markdown rendering escapes HTML and only allows `http(s)` links with a strict character set
-- CSP: `default-src 'self'`, `connect-src 'self'`, `img-src 'self' data:`, no third-party scripts
-- Headers: `nosniff`, `SAMEORIGIN`, referrer policy, Permissions-Policy
+- CSP: `default-src 'self'`, `connect-src 'self'`, `worker-src 'self'`, `img-src 'self' data:`, no third-party scripts
+- Headers: `nosniff`, `SAMEORIGIN`, referrer policy, Permissions-Policy, COOP, CORP
 - No application cookies, localStorage, or sessionStorage
 - No analytics or tracking
 - Secrets and plaintext must not be placed in query strings; sensitive APIs reject GET
 - bcrypt cost is capped by `max_bcrypt_cost` in `config.json` (currently 14)
 - encryption KDF iterations are capped by `max_encryption_iterations` in `config.json` (currently 310000)
-- Regex testing is local, with pattern/flag/input limits
+- Regex testing is local in a Web Worker, with pattern/flag/input/time limits
 - The encryption UI does not silently POST secrets when Web Crypto is missing
 - `APP_DEBUG=1` may include exception detail on error pages. Keep it off in production
+- Application rate limiting is 20 requests / 60 seconds on expensive APIs
 
 Report issues at the GitHub repository.
 

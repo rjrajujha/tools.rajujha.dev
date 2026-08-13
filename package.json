@@ -4,7 +4,8 @@
   "scripts": {
     "build": "npm run build:css",
     "build:css": "tailwindcss -i ./src/input.css -o ./assets/app.css --minify",
-    "watch:css": "tailwindcss -i ./src/input.css -o ./assets/app.css --watch"
+    "watch:css": "tailwindcss -i ./src/input.css -o ./assets/app.css --watch",
+    "test": "node --check assets/app.js && node --check assets/regex-worker.js"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.11",

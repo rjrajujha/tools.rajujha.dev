@@ -6,5 +6,13 @@
     "max_bcrypt_cost": 14,
     "encryption_iterations": 310000,
     "max_encryption_iterations": 310000
+  },
+  "rate_limit": {
+    "enabled": true,
+    "requests": 20,
+    "window_seconds": 60
+  },
+  "client_ip": {
+    "trust_cloudflare": false
   }
 }

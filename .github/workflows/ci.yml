@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: openssl
+          coverage: none
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: PHP syntax
+        run: |
+          php -l bootstrap.php
+          php -l index.php
+          php -l api.php
+          php -l router.php
+          php -l tests/run.php
+          php -l tests/http.php
+
+      - name: JavaScript syntax
+        run: |
+          node --check assets/app.js
+          node --check assets/regex-worker.js
+
+      - name: Install and build CSS
+        run: |
+          npm ci
+          npm run build
+
+      - name: Dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Config and rate-limit tests
+        run: php tests/run.php
+
+      - name: HTTP security regression tests
+        env:
+          APP_RATE_LIMIT_DIR: ${{ runner.temp }}/rate-limit
+          BASE_URL: http://127.0.0.1:8080
+        run: |
+          mkdir -p "$APP_RATE_LIMIT_DIR"
+          php -S 127.0.0.1:8080 router.php >/tmp/php-server.log 2>&1 &
+          trap 'kill %1 || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/health >/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          php tests/http.php
