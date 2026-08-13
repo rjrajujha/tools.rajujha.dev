@@ -42,6 +42,9 @@ define('APP_ENC_VERSION', 2);
 define('APP_ENC_SALT_BYTES', 16);
 define('APP_ENC_IV_BYTES', 12);
 define('APP_ENC_TAG_BYTES', 16);
+/** Compact opaque encoding magic: ASCII "TJ" + versioned binary fields. */
+define('APP_ENC_COMPACT_MAGIC', 'TJ');
+define('APP_ENC_COMPACT_HEADER_BYTES', 51);
 
 /** Absolute safety bounds for rate_limit config. Policy defaults come from config.json. */
 define('APP_RATE_LIMIT_REQUESTS_MIN', 1);

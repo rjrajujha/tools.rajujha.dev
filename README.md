@@ -4,16 +4,16 @@ Fast, private developer utilities. No accounts, no analytics, no database, no tr
 
 Version **1.0.0**. Live site: [tools.rajujha.dev](https://tools.rajujha.dev)
 
-The app is intentionally small: PHP 8.1+, HTML, compiled CSS, and a single JavaScript file. Most tools run in the browser. Optional JSON APIs exist for scripts. There is no framework and no application-side storage of user input.
+PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tools run in the browser. Optional JSON APIs exist for scripts. There is no framework and no application-side storage of user input.
 
-## Overview
+## Features
 
 - Clean URLs for every utility
 - Browser-first processing whenever it is safe
-- JSON APIs for scripting, with GET only for safe/read-only work
+- JSON APIs for scripting (GET only for safe/generated values)
 - No cookies, accounts, localStorage, sessionStorage, or analytics
 - Security headers, CSP, and blocked access to sensitive files
-- Application-level rate limiting on expensive APIs (20 requests / 60 seconds by default)
+- Application rate limiting on expensive APIs (20 requests / 60 seconds by default)
 - `/health` for uptime checks
 
 ## Tools
@@ -33,46 +33,36 @@ The app is intentionally small: PHP 8.1+, HTML, compiled CSS, and a single JavaS
 | Markdown Preview | `/markdown` | Browser only | — |
 | IP Checker | `/ip` | Server-observed `REMOTE_ADDR` | `GET /api/ip` |
 | Secret Generator | `/secret` | Browser Web Crypto + optional API | `GET /api/secret` |
-| Encrypt - Decrypt | `/encryption` | Browser Web Crypto only in the UI | `POST /api/encryption` |
+| Encrypt-Decrypt | `/encryption` | Browser Web Crypto only in the UI | `POST /api/encryption` |
 
-## Architecture
+## Privacy and security
 
+- Output is escaped in PHP. Markdown allows only safe `http(s)` links
+- CSP is same-origin; no third-party scripts or analytics
+- Sensitive APIs (`hash`, `base64`, `encryption`) require POST — do not put secrets or plaintext in query strings
+- Encrypt-Decrypt runs locally in the browser when Web Crypto is available; the UI does not silently fall back to the API
+- bcrypt and encryption iteration ceilings come from `config.json`
+- Application rate limiting protects expensive endpoints; identity uses `REMOTE_ADDR` (hashed on disk). Proxy headers are not trusted by default
+
+Strength of encryption depends on secret entropy and correct use. This is not a claim that any scheme is unbreakable.
+
+## Local development
+
+```bash
+git clone https://github.com/rjrajujha/tools.rajujha.dev.git
+cd tools.rajujha.dev
+npm install
+npm run build
+php -S 127.0.0.1:8080 router.php
 ```
-index.php          HTML routes and tool pages
-api.php            JSON API
-bootstrap.php      Shared helpers, errors, config, /health
-router.php         Local PHP built-in server only
-config.json        Author, version, security limits, rate-limit policy
-assets/app.js      Client logic
-assets/regex-worker.js  Isolated regex execution
-assets/app.css     Compiled Tailwind
-assets/vendor/     Vendored QR library
-src/input.css      Tailwind source
-.htaccess          Production rewrite rules and security headers
-tests/             Config, rate-limit, and HTTP regression tests
-```
 
-`bootstrap.php` and `router.php` are not public endpoints. `config.json` is not web-accessible.
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080). Use `npm run watch:css` while editing styles.
 
-## Browser vs API processing
-
-Interactive pages prefer local processing:
-
-- Password, UUID, Secret: Web Crypto / `crypto.getRandomValues`
-- Hash: Web Crypto for SHA-256/384/512; MD5, SHA-1, bcrypt, and `all` use `POST /api/hash`
-- Encrypt - Decrypt: Web Crypto AES-256-GCM in the browser. The UI never sends plaintext or the secret key to the server. If Web Crypto is unavailable (insecure HTTP, very old browser), the page shows an error instead of falling back to the API. Generate a secret at `/secret`.
-- Timestamp clock, JSON, JWT, User-Agent, Markdown, Base64 UI, QR: browser-local
-- Regex: browser Web Worker with pattern/input limits and a time bound
-- IP: the only tool that must ask the server, because the observed address is a server property
-- Optional JSON APIs do not store data
-
-QR codes are drawn onto a canvas in the browser. Content is not sent to a third-party service.
+PHP’s built-in server must use `router.php`. Do not expose `router.php` as a public Apache endpoint.
 
 ## API usage
 
-All API routes return JSON and use HTTP status codes for invalid requests.
-
-Success:
+Responses use a shared envelope plus tool-specific fields:
 
 ```json
 {
@@ -83,124 +73,11 @@ Success:
 }
 ```
 
-Error:
+Sensitive endpoints: `POST /api/hash`, `POST /api/base64`, `POST /api/encryption` (JSON or form-encoded). Request bodies and string inputs are limited to 65,536 bytes.
 
-```json
-{
-  "ok": false,
-  "tool": "hash",
-  "data": null,
-  "error": "A useful error message"
-}
-```
+Safe GET examples: `/api/password`, `/api/uuid`, `/api/secret`, `/api/timestamp`, `/api/ip`, `/api/user-agent`.
 
-Top-level result fields such as `hash`, `output`, and `password` are still included for compatibility with existing scripts. Prefer `data` for new integrations.
-
-`POST` bodies may be JSON (`Content-Type: application/json`) or form-encoded. Sensitive endpoints ignore query-string values for `str` and `key`.
-
-Request bodies and string inputs are limited to 65,536 bytes.
-
-### GET vs POST
-
-Use **GET** only for safe or generated values:
-
-- `GET /api/password`
-- `GET /api/timestamp`
-- `GET /api/uuid`
-- `GET /api/secret`
-- `GET /api/ip`
-- `GET /api/user-agent`
-
-Use **POST** for plaintext, passwords, keys, or anything that should not appear in URLs or access logs:
-
-- `POST /api/hash`
-- `POST /api/base64`
-- `POST /api/encryption`
-
-GET to those endpoints returns HTTP 405.
-
-### Password
-
-```text
-GET /api/password?length=24&upper=1&lower=1&numbers=1&symbols=1&count=1
-```
-
-Cryptographically random passwords via PHP `random_int`. `length` is 8–128, `count` is 1–20. Boolean flags accept `1`/`0` or `true`/`false`. The UI generates locally; the API is optional and stores nothing.
-
-### Hash
-
-```text
-POST /api/hash
-Content-Type: application/json
-
-{"str":"admin123","algorithm":"sha256"}
-```
-
-```text
-POST /api/hash
-Content-Type: application/json
-
-{"str":"admin123","algorithm":"bcrypt","cost":12}
-```
-
-Algorithms: `md5`, `sha1`, `sha256`, `sha384`, `sha512`, `bcrypt`, `all`. bcrypt uses a fresh random salt.
-
-- `bcrypt_cost` (default, from `config.json`): 12
-- `max_bcrypt_cost` (API security ceiling, from `config.json`): 14
-
-Omit `cost` to use `bcrypt_cost`. The API rejects any cost above `max_bcrypt_cost`. Minimum cost is 4. Do not send secrets using GET query parameters.
-
-### Timestamp
-
-```text
-GET /api/timestamp
-GET /api/timestamp?timestamp=1755000000&unit=s
-GET /api/timestamp?timestamp=1755000000000&unit=ms
-```
-
-Response includes Unix seconds, milliseconds, ISO 8601 UTC and a readable UTC value. The UI clock updates locally.
-
-### UUID
-
-```text
-GET /api/uuid?count=1
-```
-
-UUID v4. `count` is 1–100. The UI uses Web Crypto.
-
-### Secret
-
-```text
-GET /api/secret?length=48&format=hex&count=1
-```
-
-`length` is 16–256. `format` is `hex`, `base64`, or `base64url`. The UI uses Web Crypto.
-
-### Base64
-
-```text
-POST /api/base64
-Content-Type: application/json
-
-{"str":"hello","mode":"encode"}
-```
-
-### User-Agent
-
-```text
-GET /api/user-agent
-GET /api/user-agent?ua=Mozilla/5.0%20...
-```
-
-### IP
-
-```text
-GET /api/ip
-```
-
-Reports server-observed `REMOTE_ADDR` as IPv4 or IPv6. A single TCP connection is only one address family, so the other family is `null` with status `not_detected`. This is expected. The tool does not invent addresses and does not call a third-party IP API.
-
-`X-Forwarded-For` and `X-Real-IP` are returned under `proxy_headers` for inspection. They are not trusted. This app does not currently have a trusted-proxy configuration.
+`GET /health` returns UTC status JSON and is not cacheable.
 
 ### Encryption
 
@@ -211,43 +88,25 @@ Content-Type: application/json
 {"str":"hello","key":"your-secret","mode":"encrypt"}
 ```
 
-The UI does not use this endpoint. Use it only from scripts that already accept sending plaintext to your own server.
+**Encrypt**
 
-Do not send secret keys or sensitive plaintext using GET query parameters.
+- `mode` must be `encrypt` or `decrypt`
+- Optional `v` selects the encryption format for encrypt:
+  - omit `v` → **v = 2** (default, recommended)
+  - `v = 2` → current format (AES-256-GCM, PBKDF2-HMAC-SHA-256, AAD-bound metadata)
+  - `v = 1` → legacy JSON format without AAD (API compatibility only)
+  - any other `v` → rejected
+- V2 encrypt returns both `compact` (opaque Base64) and `json`/`payload` (structured object) from **one** encryption. `output` remains the pretty-printed JSON string for compatibility. Base64 is encoding, not encryption.
+- Algorithm and KDF are not client-selectable. Iteration defaults/ceilings come from `config.json` (`encryption_iterations` / `max_encryption_iterations`, currently 310000)
 
-- Algorithm: AES-256-GCM
-- KDF: PBKDF2-HMAC-SHA-256
-- `encryption_iterations` (default, from `config.json`): 310000
-- `max_encryption_iterations` (API security ceiling, from `config.json`): 310000
+**Decrypt**
 
-Omit `iter` to use `encryption_iterations`. The API rejects any iteration count above `max_encryption_iterations`. The iteration count actually used is stored in the versioned payload. Generate a strong secret at `/secret`.
+- Auto-detects compact Base64, V2 JSON, V1 JSON, and the older binary blob
+- No `decrypt-v1` / `decrypt-v2` mode selection
 
-## Encryption design
+The UI only offers Encrypt and Decrypt. It always encrypts with V2 and never exposes V1 as a mode. Generate secrets at `/secret`.
 
-Browser and PHP use the same construction.
-
-- Algorithm: AES-256-GCM (256-bit key, 12-byte IV, 16-byte authentication tag)
-- KDF: PBKDF2-HMAC-SHA-256
-- Iterations: `encryption_iterations` from `config.json` (currently 310,000)
-- API ceiling: `max_encryption_iterations` from `config.json` (currently 310,000)
-- Salt: 16 random bytes
-- IV: 12 random bytes, fresh for every encryption
-- Authenticated encryption: 128-bit GCM tag, verified on decrypt
-- v2 payloads also bind algorithm, KDF, iteration count, salt, and IV as AES-GCM additional authenticated data (AAD), so metadata tampering fails authentication
-
-Argon2id is stronger in principle, but Web Crypto does not provide it. Using Argon2 only on the server would split browser and API formats. PBKDF2 is available in both Web Crypto and PHP, so both sides stay compatible without extra libraries.
-
-The current 310,000 iterations is substantially stronger than the previous 120,000. Decrypt of a versioned payload uses the `iter` stored in that payload and rejects values above `max_encryption_iterations`, so a crafted payload cannot force a more expensive KDF than the API ceiling.
-
-The secret key is never stored and never included in the payload. Anyone who has the secret can decrypt. A long, randomly generated secret is much stronger than a memorable password. Generate one at `/secret`.
-
-This is not a claim that the scheme is unbreakable. Strength depends on secret entropy, implementation correctness, and the attacker’s resources.
-
-### Versioned payload
-
-Encrypt returns JSON:
-
-New encryptions use payload version 2. Version 1 JSON and the older binary blob remain decryptable.
+Example V2 payload:
 
 ```json
 {
@@ -262,38 +121,9 @@ New encryptions use payload version 2. Version 1 JSON and the older binary blob 
 }
 ```
 
-Decrypt accepts v2 and v1 JSON. For compatibility, it also accepts the previous binary blob: Base64(`salt || iv || tag || ciphertext`) derived with 120,000 PBKDF2 iterations.
+## Configuration
 
-## QR privacy
-
-QR codes are generated locally with a vendored copy of [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) in `assets/vendor/`. Unicode is supported. Error correction levels L/M/Q/H are available. PNG and SVG downloads are produced in the browser.
-
-There is no call to `api.qrserver.com` or any other QR service. CSP `connect-src` and `img-src` do not allow third-party QR hosts.
-
-## IP limitations
-
-A server sees one `REMOTE_ADDR` per TCP connection. If the visitor connected over IPv4, IPv6 is “Not detected on this connection”, and the reverse. Dual-stack visibility would require extra infrastructure (separate IPv4 and IPv6 probes, or a trusted reverse proxy that exposes both). This app does not add a third-party lookup just to fill the empty field.
-
-## /health
-
-```text
-GET /health
-```
-
-HTTP 200 JSON, no cache, no HTML:
-
-```json
-{
-  "status": "ok",
-  "timestamp": "2026-08-13T18:00:00Z",
-  "author": "Raju Jha",
-  "version": "1.0.0"
-}
-```
-
-`timestamp` is generated at request time in UTC ISO-8601. `author` and `version` come from `config.json`. The response does not include secrets, filesystem paths, security limits, or debug information.
-
-## config.json
+`config.json` holds author/version metadata, security ceilings, and rate-limit policy. It is not web-accessible. Do not put credentials in it.
 
 ```json
 {
@@ -316,94 +146,13 @@ HTTP 200 JSON, no cache, no HTML:
 }
 ```
 
-This file is site metadata and security-limit configuration. Do not put credentials, API keys, or secrets in it. Web access is denied by `.htaccess` and the local router. Unknown keys are ignored.
+Invalid configuration fails safely. Missing `rate_limit.enabled` keeps limiting **on**. Set `"enabled": false` only to opt out explicitly. Absolute ceilings prevent absurd values.
 
-- `bcrypt_cost` — default bcrypt cost for generation
-- `max_bcrypt_cost` — API security ceiling; requests above this are rejected
-- `encryption_iterations` — default PBKDF2-HMAC-SHA-256 iterations for encrypt
-- `max_encryption_iterations` — API security ceiling; payloads or `iter` values above this are rejected
-- `rate_limit.enabled` — application-level limiter. Missing this key keeps limiting **on**. Set `false` only to opt out explicitly
-- `rate_limit.requests` — max hits per client per window (absolute range 1–120)
-- `rate_limit.window_seconds` — window length (absolute range 10–3600)
-- `client_ip.trust_cloudflare` — when `true`, rate limiting may use `CF-Connecting-IP`. Leave `false` unless the origin accepts traffic only from Cloudflare
+## Deployment
 
-`bcrypt_cost` must be `<= max_bcrypt_cost`. `encryption_iterations` must be `<= max_encryption_iterations`. Invalid `config.json` fails safely with a generic error (no filesystem paths or stack traces). If the file is missing, the app uses the same defaults shown above.
+Runtime: PHP 8.1+ with `mod_rewrite` and OpenSSL. Keep `APP_DEBUG` unset. Serve over HTTPS (Web Crypto needs a secure context).
 
-## Rate limiting
-
-Default policy: **20 requests per 60 seconds** per client, shared across expensive endpoints:
-
-- `POST /api/hash`
-- `POST /api/encryption`
-- `GET|POST /api/password`
-- `GET|POST /api/secret`
-- `GET|POST /api/uuid`
-
-HTML pages, `/health`, `/api/timestamp`, `/api/ip`, `/api/user-agent`, and `/api/base64` are not application-rate-limited.
-
-Client identity is `REMOTE_ADDR` (hashed on disk). `X-Forwarded-For` and `X-Real-IP` are never used for limiting. Enable `client_ip.trust_cloudflare` only when Cloudflare sits in front of the origin and the origin is not reachable directly. Files live in `var/rate-limit/` (not web-accessible, not committed). The limiter uses exclusive file locks, bounds directory size, and periodically deletes expired files. If the limiter cannot write, it fails open so a full disk does not become a site-wide outage. Over-limit responses are HTTP 429 with `Retry-After` and `Cache-Control: no-store`.
-
-This is defense-in-depth. Cloudflare and the hosting CDN should still rate-limit `/api/*` at the edge. See [CDN and Cloudflare](#cdn-and-cloudflare).
-
-## Local development
-
-```bash
-git clone https://github.com/rjrajujha/tools.rajujha.dev.git
-cd tools.rajujha.dev
-npm install
-npm run build
-php -S 127.0.0.1:8080 router.php
-```
-
-Open [http://127.0.0.1:8080](http://127.0.0.1:8080).
-
-```bash
-npm run watch:css
-```
-
-Tailwind compiles from `src/input.css` into `assets/app.css`. Production hosts do not need Node.js if the compiled CSS and vendored QR files are already present.
-
-PHP’s built-in server must use `router.php`. Do not upload `router.php` as a public Apache endpoint; `.htaccess` already forbids it.
-
-## Production deployment
-
-Runtime is PHP 8.1+ with `mod_rewrite` and OpenSSL. Node.js is only needed to rebuild CSS or refresh the vendored QR library.
-
-1. Run `npm run build` so `assets/app.css` is minified.
-2. Upload the app files. Do **not** upload `node_modules/`.
-3. Keep `APP_DEBUG` unset or `0` on the server.
-4. Serve over HTTPS. Web Crypto on the encryption and hash tools requires a secure context.
-5. Confirm `.htaccess` is honoured, or replicate its rewrite rules in the server config.
-
-Required on the host:
-
-- `index.php`, `api.php`, `bootstrap.php`
-- `config.json`
-- `assets/app.css`, `assets/app.js`, `assets/regex-worker.js`
-- `assets/vendor/qrcode-generator.js`, `assets/vendor/qrcode-generator-utf8.js`
-- `.htaccess`
-- `favicon.svg`, `robots.txt`, `sitemap.xml`, `site.webmanifest`
-
-Do not upload `node_modules/`, `src/` (unless you rebuild CSS on the server), `tests/`, or `.github/`. The process user must be able to create `var/rate-limit/` (mode 0700).
-
-`.htaccess` forbids web access to `router.php`, `bootstrap.php`, `config.json`, `.git`, `.env`, `src/`, `node_modules/`, `var/`, `tests/`, `.github/`, and common secret/backup files.
-
-Enable PHP OPcache in production. `config.json` is read once per process and cached in memory for the request; OPcache removes repeated PHP parse cost. There is no database.
-
-Keep `APP_DEBUG` unset. It is read only from the process environment, never from query parameters.
-
-## Adding a tool
-
-1. Add the route to `$routes` in `index.php`.
-2. Add a homepage card to `$tools`.
-3. Add the tool UI: title, description, controls, result, copy/download, privacy note, and the API docs card.
-4. Add client logic in `assets/app.js`.
-5. Add CSS only when shared components are not enough, then run `npm run build`.
-6. Add an API route in `.htaccess`, `router.php`, and `api.php` only if needed. Use POST for sensitive input.
-7. Add API docs metadata so the tool gets the same “How to use this tool as an API” card.
-8. Update this README, `sitemap.xml`, and the rewrite allow-list.
-
-Keep new tools client-first when possible. Do not store user input.
+Upload `index.php`, `api.php`, `bootstrap.php`, `config.json`, compiled assets (including `regex-worker.js` and vendored QR files), `.htaccess`, and static site files. Do not upload `node_modules/`, `tests/`, or `.github/`. Allow the process user to create `var/rate-limit/` (0700). Enable OPcache when available.
 
 ## Testing
 
@@ -413,57 +162,11 @@ php -l index.php
 php -l api.php
 php -l router.php
 node --check assets/app.js
-node --check assets/regex-worker.js
 npm run build
 php tests/run.php
-```
-
-Then:
-
-```bash
 php -S 127.0.0.1:8080 router.php
 php tests/http.php
 ```
-
-`tests/http.php` covers 405 behaviour, malformed JSON, oversized input, invalid types, bcrypt/iteration ceilings, encryption tampering, XSS payloads, rate limiting, and `Cache-Control: no-store` on sensitive responses. OpenSSL must be enabled for encryption cases.
-
-## CDN and Cloudflare
-
-The application is designed to sit behind the hosting CDN and optionally Cloudflare. Repository code cannot configure those products.
-
-**Cache**
-
-- Cache: `/assets/*` (CSS/JS are versioned with `?v=filemtime`; treat them as immutable), `/favicon.svg`, `/robots.txt`, `/sitemap.xml`, `/site.webmanifest`
-- Short TTL is acceptable for HTML tool pages (no user data)
-- Never cache: `/api/*`, `/api.php`, `/health`, or any POST response
-- Sensitive API responses send `Cache-Control: no-store`, `CDN-Cache-Control: no-store`, and `Surrogate-Control: no-store`
-
-**Recommended Cloudflare / hosting settings**
-
-- Proxy only HTTPS to origin; enable HSTS at the edge as well as in `.htaccess`
-- WAF: block obviously malicious paths (`.git`, `.env`, `config.json`, `var/`, `src/`)
-- Rate-limit `/api/hash` and `/api/encryption` more tightly than page views (for example 20–40 req/min per IP)
-- Bot fight / managed challenge on `/api/*` if abuse appears; allow legitimate scripts
-- Do not cache `/api/*` or `/health` even if “cache everything” is enabled
-- Restrict origin to Cloudflare IPs (authenticated origin pull or allowlist) before setting `client_ip.trust_cloudflare` to `true`
-- Access logs on the origin and at Cloudflare may still contain IP addresses and URLs. Sensitive tools already reject GET so secrets are not in query strings; POST bodies should not be logged
-
-## Security and privacy
-
-- Output is escaped in PHP (`htmlspecialchars`). Markdown rendering escapes HTML and only allows `http(s)` links with a strict character set
-- CSP: `default-src 'self'`, `connect-src 'self'`, `worker-src 'self'`, `img-src 'self' data:`, no third-party scripts
-- Headers: `nosniff`, `SAMEORIGIN`, referrer policy, Permissions-Policy, COOP, CORP
-- No application cookies, localStorage, or sessionStorage
-- No analytics or tracking
-- Secrets and plaintext must not be placed in query strings; sensitive APIs reject GET
-- bcrypt cost is capped by `max_bcrypt_cost` in `config.json` (currently 14)
-- encryption KDF iterations are capped by `max_encryption_iterations` in `config.json` (currently 310000)
-- Regex testing is local in a Web Worker, with pattern/flag/input/time limits
-- The encryption UI does not silently POST secrets when Web Crypto is missing
-- `APP_DEBUG=1` may include exception detail on error pages. Keep it off in production
-- Application rate limiting is 20 requests / 60 seconds on expensive APIs
-
-Report issues at the GitHub repository.
 
 ## License
 

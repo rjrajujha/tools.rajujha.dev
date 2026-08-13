@@ -424,14 +424,109 @@ function encryption_aad(int $version, string $alg, string $kdf, int $iterations,
     ]);
 }
 
-function encrypt_payload(string $plaintext, string $secret, int $iterations): array
+/**
+ * Compact opaque Base64 encoding of one encrypted payload.
+ * Binary layout: "TJ" | version(u8) | iter(u32 BE) | salt(16) | iv(12) | tag(16) | ct
+ */
+function encrypt_compact_encode(array $payload): string
 {
+    $version = filter_var($payload['v'] ?? null, FILTER_VALIDATE_INT);
+    $iterations = filter_var($payload['iter'] ?? null, FILTER_VALIDATE_INT);
+    $salt = isset($payload['salt']) ? b64_decode_strict((string) $payload['salt']) : false;
+    $iv = isset($payload['iv']) ? b64_decode_strict((string) $payload['iv']) : false;
+    $ct = isset($payload['ct']) ? b64_decode_strict((string) $payload['ct']) : false;
+    $tag = isset($payload['tag']) ? b64_decode_strict((string) $payload['tag']) : false;
+
+    if (
+        $version === false
+        || $iterations === false
+        || $salt === false
+        || $iv === false
+        || $ct === false
+        || $tag === false
+        || !in_array($version, [APP_ENC_VERSION_V1, APP_ENC_VERSION], true)
+        || $iterations < APP_PBKDF2_ITER_MIN
+        || $iterations > APP_PBKDF2_ITER_ABS_MAX
+        || strlen($salt) !== APP_ENC_SALT_BYTES
+        || strlen($iv) !== APP_ENC_IV_BYTES
+        || strlen($tag) !== APP_ENC_TAG_BYTES
+    ) {
+        fail('Unable to encode compact encrypted payload', 500, 'encryption');
+    }
+
+    $binary = APP_ENC_COMPACT_MAGIC
+        . chr($version)
+        . pack('N', $iterations)
+        . $salt
+        . $iv
+        . $tag
+        . $ct;
+
+    return base64_encode($binary);
+}
+
+function encrypt_compact_decode(string $binary): ?array
+{
+    if (strlen($binary) < APP_ENC_COMPACT_HEADER_BYTES) {
+        return null;
+    }
+
+    if (!str_starts_with($binary, APP_ENC_COMPACT_MAGIC)) {
+        return null;
+    }
+
+    $version = ord($binary[2]);
+    if (!in_array($version, [APP_ENC_VERSION_V1, APP_ENC_VERSION], true)) {
+        return null;
+    }
+
+    $unpacked = unpack('Niter', substr($binary, 3, 4));
+    if ($unpacked === false) {
+        return null;
+    }
+
+    $iterations = (int) $unpacked['iter'];
+    $salt = substr($binary, 7, APP_ENC_SALT_BYTES);
+    $iv = substr($binary, 23, APP_ENC_IV_BYTES);
+    $tag = substr($binary, 35, APP_ENC_TAG_BYTES);
+    $ct = substr($binary, 51);
+
+    if (
+        $iterations < APP_PBKDF2_ITER_MIN
+        || $iterations > APP_PBKDF2_ITER_ABS_MAX
+        || strlen($salt) !== APP_ENC_SALT_BYTES
+        || strlen($iv) !== APP_ENC_IV_BYTES
+        || strlen($tag) !== APP_ENC_TAG_BYTES
+    ) {
+        return null;
+    }
+
+    return [
+        'v' => $version,
+        'alg' => 'AES-256-GCM',
+        'kdf' => 'PBKDF2-SHA256',
+        'iter' => $iterations,
+        'salt' => base64_encode($salt),
+        'iv' => base64_encode($iv),
+        'ct' => base64_encode($ct),
+        'tag' => base64_encode($tag),
+    ];
+}
+
+function encrypt_payload(string $plaintext, string $secret, int $iterations, int $version = APP_ENC_VERSION): array
+{
+    if (!in_array($version, [APP_ENC_VERSION_V1, APP_ENC_VERSION], true)) {
+        fail('Unsupported encrypted payload', 400, 'encryption');
+    }
+
     $salt = random_bytes(APP_ENC_SALT_BYTES);
     $iv = random_bytes(APP_ENC_IV_BYTES);
     $derived = derive_aes_key($secret, $salt, $iterations);
     $saltB64 = base64_encode($salt);
     $ivB64 = base64_encode($iv);
-    $aad = encryption_aad(APP_ENC_VERSION, 'AES-256-GCM', 'PBKDF2-SHA256', $iterations, $saltB64, $ivB64);
+    $aad = $version === APP_ENC_VERSION
+        ? encryption_aad($version, 'AES-256-GCM', 'PBKDF2-SHA256', $iterations, $saltB64, $ivB64)
+        : '';
     $tag = '';
     $cipher = openssl_encrypt($plaintext, 'aes-256-gcm', $derived, OPENSSL_RAW_DATA, $iv, $tag, $aad);
 
@@ -440,7 +535,7 @@ function encrypt_payload(string $plaintext, string $secret, int $iterations): ar
     }
 
     return [
-        'v' => APP_ENC_VERSION,
+        'v' => $version,
         'alg' => 'AES-256-GCM',
         'kdf' => 'PBKDF2-SHA256',
         'iter' => $iterations,
@@ -458,6 +553,14 @@ function decrypt_payload(string $input, string $secret): string
 
     if (is_array($decodedJson)) {
         return decrypt_versioned($decodedJson, $secret);
+    }
+
+    $raw = b64_decode_strict($trimmed);
+    if ($raw !== false) {
+        $compact = encrypt_compact_decode($raw);
+        if (is_array($compact)) {
+            return decrypt_versioned($compact, $secret);
+        }
     }
 
     return decrypt_legacy($trimmed, $secret);
@@ -795,6 +898,31 @@ if ($tool === 'ip') {
     ]);
 }
 
+function encryption_request_version(): int
+{
+    $params = request_params();
+    if (!array_key_exists('v', $params)) {
+        return APP_ENC_VERSION;
+    }
+
+    $raw = $params['v'];
+    if (is_int($raw) && in_array($raw, [APP_ENC_VERSION_V1, APP_ENC_VERSION], true)) {
+        return $raw;
+    }
+
+    if (is_string($raw) && ctype_digit($raw)) {
+        $parsed = (int) $raw;
+        if (
+            in_array($parsed, [APP_ENC_VERSION_V1, APP_ENC_VERSION], true)
+            && (string) $parsed === $raw
+        ) {
+            return $parsed;
+        }
+    }
+
+    fail('v must be 1 or 2', 400, 'encryption');
+}
+
 if ($tool === 'encryption') {
     if (!function_exists('openssl_encrypt')) {
         fail('OpenSSL is not available on this server', 500, 'encryption');
@@ -832,15 +960,20 @@ if ($tool === 'encryption') {
             $iterations = $parsed;
         }
 
-        $payload = encrypt_payload($str, $key, $iterations);
+        $version = encryption_request_version();
+        $payload = encrypt_payload($str, $key, $iterations, $version);
+        $compact = encrypt_compact_encode($payload);
         $output = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
 
         ok('encryption', [
             'mode' => 'encrypt',
+            'version' => $version,
             'algorithm' => 'AES-256-GCM',
             'kdf' => 'PBKDF2-HMAC-SHA-256',
             'iterations' => $iterations,
             'payload' => $payload,
+            'json' => $payload,
+            'compact' => $compact,
             'output' => $output,
         ]);
     }

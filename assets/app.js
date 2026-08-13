@@ -1079,7 +1079,84 @@
     );
   }
 
-  async function encryptLocal(value, key) {
+  function u32Be(value) {
+    return new Uint8Array([(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255]);
+  }
+
+  function readU32Be(bytes, offset) {
+    return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
+  }
+
+  /**
+   * Compact opaque Base64 of one payload.
+   * Binary: "TJ" | version(u8) | iter(u32 BE) | salt(16) | iv(12) | tag(16) | ct
+   */
+  function encodeCompact(payload) {
+    const version = Number(payload.v);
+    const iterations = Number(payload.iter);
+    const salt = unb64(String(payload.salt || ''));
+    const iv = unb64(String(payload.iv || ''));
+    const ct = unb64(String(payload.ct || ''));
+    const tag = unb64(String(payload.tag || ''));
+    if (
+      ![1, 2].includes(version) ||
+      !Number.isInteger(iterations) ||
+      iterations < PBKDF2_ITER_MIN ||
+      iterations > appConfig().maxEncryptionIterations ||
+      salt.length !== 16 ||
+      iv.length !== 12 ||
+      tag.length !== 16
+    ) {
+      throw Error('Unable to encode compact encrypted payload.');
+    }
+
+    const header = concatBytes(
+      utf8Encode('TJ'),
+      new Uint8Array([version]),
+      u32Be(iterations),
+      salt,
+      iv,
+      tag
+    );
+    return b64(concatBytes(header, ct));
+  }
+
+  function decodeCompact(binary) {
+    if (binary.length < 51) return null;
+    if (binary[0] !== 0x54 || binary[1] !== 0x4a) return null;
+    const version = binary[2];
+    if (![1, 2].includes(version)) return null;
+    const iterations = readU32Be(binary, 3);
+    const salt = binary.slice(7, 23);
+    const iv = binary.slice(23, 35);
+    const tag = binary.slice(35, 51);
+    const ct = binary.slice(51);
+    if (
+      iterations < PBKDF2_ITER_MIN ||
+      iterations > appConfig().maxEncryptionIterations ||
+      salt.length !== 16 ||
+      iv.length !== 12 ||
+      tag.length !== 16
+    ) {
+      return null;
+    }
+    return {
+      v: version,
+      alg: 'AES-256-GCM',
+      kdf: 'PBKDF2-SHA256',
+      iter: iterations,
+      salt: b64(salt),
+      iv: b64(iv),
+      ct: b64(ct),
+      tag: b64(tag),
+    };
+  }
+
+  async function encryptLocal(value, key, version = 2) {
+    if (version !== 1 && version !== 2) {
+      throw Error('Unsupported encryption version.');
+    }
+
     const subtle = getSubtle();
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -1087,23 +1164,16 @@
     const saltB64 = b64(salt);
     const ivB64 = b64(iv);
     const derived = await deriveAesKey(key, salt, iterations);
-    const raw = new Uint8Array(
-      await subtle.encrypt(
-        {
-          name: 'AES-GCM',
-          iv,
-          additionalData: encryptionAad(2, 'AES-256-GCM', 'PBKDF2-SHA256', iterations, saltB64, ivB64),
-          tagLength: 128,
-        },
-        derived,
-        utf8Encode(value)
-      )
-    );
+    const params = { name: 'AES-GCM', iv, tagLength: 128 };
+    if (version === 2) {
+      params.additionalData = encryptionAad(2, 'AES-256-GCM', 'PBKDF2-SHA256', iterations, saltB64, ivB64);
+    }
+    const raw = new Uint8Array(await subtle.encrypt(params, derived, utf8Encode(value)));
     const tag = raw.slice(-16);
     const ct = raw.slice(0, -16);
 
-    return encodePayload({
-      v: 2,
+    const payload = {
+      v: version,
       alg: 'AES-256-GCM',
       kdf: 'PBKDF2-SHA256',
       iter: iterations,
@@ -1111,7 +1181,13 @@
       iv: ivB64,
       ct: b64(ct),
       tag: b64(tag),
-    });
+    };
+
+    return {
+      payload,
+      json: encodePayload(payload),
+      compact: encodeCompact(payload),
+    };
   }
 
   async function decryptVersioned(payload, key) {
@@ -1160,21 +1236,88 @@
     const trimmed = value.trim();
     try {
       const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === 'object') {
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return decryptVersioned(parsed, key);
+      }
+    } catch {
+      // Fall through to compact / legacy binary formats.
+    }
+
+    try {
+      const raw = unb64(trimmed);
+      const compact = decodeCompact(raw);
+      if (compact) {
+        return decryptVersioned(compact, key);
       }
     } catch {
       // Fall through to the previous binary payload format.
     }
+
     return decryptLegacy(trimmed, key);
   }
 
   function initEncryption() {
+    const modeSelect = $('#mode');
+    const input = $('#input');
+    const inputLabel = $('#inputLabel');
+    const runBtn = $('#run');
+    const hint = $('#encHint');
+    const encryptOutputs = $('#encryptOutputs');
+    const decryptOutputs = $('#decryptOutputs');
+    const encError = $('#encError');
+
+    const hideResults = () => {
+      if (encryptOutputs) encryptOutputs.hidden = true;
+      if (decryptOutputs) decryptOutputs.hidden = true;
+      if (encError) encError.hidden = true;
+      setResult($('#compactOutput'), '');
+      setResult($('#jsonOutput'), '');
+      setResult($('#decryptOutput'), '');
+      setResult($('#errorOutput'), '');
+    };
+
+    const showError = (message) => {
+      hideResults();
+      if (encError) encError.hidden = false;
+      setResult($('#errorOutput'), message);
+    };
+
+    const currentMode = () => (modeSelect?.value === 'decrypt' ? 'decrypt' : 'encrypt');
+
+    const applyMode = () => {
+      const mode = currentMode();
+      const decrypting = mode === 'decrypt';
+      if (inputLabel) {
+        inputLabel.textContent = decrypting ? 'Encrypted Input' : 'String / Input';
+      }
+      if (input) {
+        input.placeholder = decrypting
+          ? 'Paste compact Base64 or encrypted JSON'
+          : 'Hello world';
+      }
+      if (runBtn) {
+        runBtn.textContent = decrypting ? 'Decrypt' : 'Encrypt';
+        runBtn.dataset.label = runBtn.textContent;
+      }
+      if (hint) {
+        hint.textContent = decrypting
+          ? 'Decrypt auto-detects compact Base64, current JSON, older JSON, and the legacy binary blob. Processing stays in your browser. Press Ctrl+Enter to run.'
+          : 'AES-256-GCM with PBKDF2-HMAC-SHA-256 runs entirely in your browser. One Encrypt produces both compact Base64 and JSON. Press Ctrl+Enter to run.';
+      }
+      hideResults();
+    };
+
+    if (modeSelect) {
+      modeSelect.value = 'encrypt';
+      modeSelect.addEventListener('change', applyMode);
+    }
+    applyMode();
+
     const run = async () => {
       const button = $('#run');
+      const mode = currentMode();
       setBusy(button, true, 'Working…');
       try {
-        const mode = $('#mode').value;
         const key = $('#key').value;
         const value = $('#input').value;
         if (!key) throw Error('Secret key is required.');
@@ -1184,16 +1327,24 @@
           );
         }
 
-        setResult(
-          $('#output'),
-          mode === 'encrypt' ? await encryptLocal(value, key) : await decryptLocal(value, key)
-        );
+        if (mode === 'decrypt') {
+          const plain = await decryptLocal(value, key);
+          hideResults();
+          if (decryptOutputs) decryptOutputs.hidden = false;
+          setResult($('#decryptOutput'), plain);
+        } else {
+          const result = await encryptLocal(value, key, 2);
+          hideResults();
+          if (encryptOutputs) encryptOutputs.hidden = false;
+          setResult($('#compactOutput'), result.compact);
+          setResult($('#jsonOutput'), result.json);
+        }
       } catch (error) {
         const message = String(error.message || error);
         const failed = /operation-specific|OperationError|decrypt/i.test(message)
           ? 'Decryption failed. Check the secret key and encrypted value.'
           : message;
-        setResult($('#output'), 'Encryption/decryption failed: ' + failed);
+        showError('Encryption/decryption failed: ' + failed);
       } finally {
         setBusy(button, false);
       }
@@ -1201,7 +1352,9 @@
 
     $('#run').onclick = run;
     bindSubmit(run);
-    $('#copy').onclick = () => copyText($('#output').textContent);
+    $('#copyCompact')?.addEventListener('click', () => copyText($('#compactOutput')?.textContent, $('#copyCompact')));
+    $('#copyJson')?.addEventListener('click', () => copyText($('#jsonOutput')?.textContent, $('#copyJson')));
+    $('#copyDecrypt')?.addEventListener('click', () => copyText($('#decryptOutput')?.textContent, $('#copyDecrypt')));
   }
 
   const boot = {

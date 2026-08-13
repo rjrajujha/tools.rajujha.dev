@@ -110,6 +110,26 @@ reset_rate_limit_files();
 
 $home = http_request('GET', $base . '/');
 assert_true($home['status'] === 200 && str_contains($home['body'], 'Developer tools'), 'GET /');
+assert_true(str_contains($home['body'], 'Encrypt-Decrypt'), 'home lists Encrypt-Decrypt');
+assert_true(!str_contains($home['body'], 'Encrypt - Decrypt') && !str_contains($home['body'], 'Encrypt / Decrypt'), 'home does not use old encryption names');
+
+$encPage = http_request('GET', $base . '/encryption');
+assert_true($encPage['status'] === 200 && str_contains($encPage['body'], 'Encrypt-Decrypt'), 'tool name is Encrypt-Decrypt');
+assert_true(
+    (bool) preg_match('/<select[^>]*id="mode"[^>]*>[\s\S]*?<option value="encrypt" selected>/', $encPage['body']),
+    'default mode is Encrypt'
+);
+assert_true(
+    (bool) preg_match('/<select[^>]*id="mode"[^>]*>[\s\S]*?<option value="decrypt">/', $encPage['body']),
+    'Decrypt is selectable in the mode dropdown'
+);
+assert_true(!str_contains($encPage['body'], 'Encrypt-V1'), 'Encrypt-V1 is not visible in the UI');
+assert_true(!str_contains($encPage['body'], 'value="encrypt-v1"'), 'Encrypt-V1 is not a mode option');
+assert_true(str_contains($encPage['body'], 'Compact Encrypted Text'), 'Encrypt UI includes compact output card');
+assert_true(str_contains($encPage['body'], 'Encrypted JSON / Object'), 'Encrypt UI includes JSON output card');
+assert_true(substr_count($encPage['body'], '>Copy</button>') >= 3, 'Encrypt/Decrypt copy buttons are labeled Copy');
+assert_true(!str_contains($encPage['body'], 'Copy encrypted'), 'long Copy labels are not used');
+assert_true(!str_contains($encPage['body'], 'Copy decrypted'), 'Decrypt copy button is labeled Copy');
 
 $health = http_request('GET', $base . '/health');
 assert_true($health['status'] === 200 && ($health['json']['status'] ?? null) === 'ok', 'GET /health');
@@ -235,8 +255,47 @@ assert_true($opensslOk || str_contains((string) ($enc['json']['error'] ?? ''), '
 
 if ($opensslOk) {
     $payload = $enc['json']['payload'];
+    $compact = (string) ($enc['json']['compact'] ?? '');
     assert_true(($payload['v'] ?? null) === 2, 'encryption payload version is 2');
+    assert_true(($enc['json']['version'] ?? null) === 2, 'encrypt response reports version 2');
     assert_true(($payload['alg'] ?? null) === 'AES-256-GCM', 'encryption algorithm is AES-256-GCM');
+    assert_true($compact !== '' && (bool) preg_match('#^[A-Za-z0-9+/]+=*$#', $compact), 'encrypt returns compact Base64');
+    assert_true(is_array($enc['json']['json'] ?? null), 'encrypt returns json object alias');
+    assert_true(($enc['json']['json']['salt'] ?? null) === ($payload['salt'] ?? null), 'json alias matches payload from one encryption');
+
+    $defaultV = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => 'hello',
+        'key' => 'unit-test-key',
+        'mode' => 'encrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true(($defaultV['json']['version'] ?? null) === 2 && (($defaultV['json']['payload']['v'] ?? null) === 2), 'omitted v defaults to 2');
+
+    $explicitV2 = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => 'hello',
+        'key' => 'unit-test-key',
+        'mode' => 'encrypt',
+        'v' => 2,
+    ]), ['Content-Type' => 'application/json']);
+    assert_true(($explicitV2['json']['version'] ?? null) === 2 && (($explicitV2['json']['payload']['v'] ?? null) === 2), 'v=2 uses V2 encryption');
+
+    foreach ([3, 99, 'abc'] as $badV) {
+        $bad = http_request('POST', $base . '/api/encryption', json_encode([
+            'str' => 'hello',
+            'key' => 'unit-test-key',
+            'mode' => 'encrypt',
+            'v' => $badV,
+        ]), ['Content-Type' => 'application/json']);
+        assert_true($bad['status'] === 400, 'unsupported v=' . json_encode($badV) . ' is rejected');
+    }
+
+    $legacyMode = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => 'hello',
+        'key' => 'unit-test-key',
+        'mode' => 'encrypt-v1',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($legacyMode['status'] === 400, 'mode=encrypt-v1 is rejected');
+
+    reset_rate_limit_files();
 
     $round = http_request('POST', $base . '/api/encryption', json_encode([
         'str' => $enc['json']['output'],
@@ -245,12 +304,63 @@ if ($opensslOk) {
     ]), ['Content-Type' => 'application/json']);
     assert_true($round['status'] === 200 && ($round['json']['output'] ?? null) === 'hello', 'encryption round-trip');
 
+    $compactRound = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => $compact,
+        'key' => 'unit-test-key',
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true(
+        $compactRound['status'] === 200 && ($compactRound['json']['output'] ?? null) === 'hello',
+        'compact Base64 decrypts to the same plaintext'
+    );
+
+    reset_rate_limit_files();
+
+    $strong = bin2hex(random_bytes(24));
+    $strongEnc = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => "hello 🔐 café\n{\"a\":1}",
+        'key' => $strong,
+        'mode' => 'encrypt',
+    ]), ['Content-Type' => 'application/json']);
+    $strongCompact = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => $strongEnc['json']['compact'] ?? '',
+        'key' => $strong,
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    $strongJson = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => $strongEnc['json']['output'] ?? '',
+        'key' => $strong,
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true(
+        $strongEnc['status'] === 200
+        && ($strongCompact['json']['output'] ?? null) === "hello 🔐 café\n{\"a\":1}"
+        && ($strongJson['json']['output'] ?? null) === "hello 🔐 café\n{\"a\":1}",
+        '48-char hex secret round-trips compact and JSON to the same plaintext'
+    );
+
     $wrong = http_request('POST', $base . '/api/encryption', json_encode([
         'str' => $enc['json']['output'],
         'key' => 'wrong-key',
         'mode' => 'decrypt',
     ]), ['Content-Type' => 'application/json']);
     assert_true($wrong['status'] === 400, 'wrong encryption key fails closed');
+
+    $wrongCompact = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => $compact,
+        'key' => 'wrong-key',
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($wrongCompact['status'] === 400, 'wrong key fails closed for compact input');
+
+    reset_rate_limit_files();
+
+    $badB64 = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => '%%%not-base64%%%',
+        'key' => 'unit-test-key',
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($badB64['status'] === 400, 'malformed Base64 decrypt fails closed');
 
     $tampered = $payload;
     $tampered['ct'] = base64_encode((string) base64_decode((string) $tampered['ct'], true) . 'x');
@@ -279,6 +389,8 @@ if ($opensslOk) {
     ]), ['Content-Type' => 'application/json']);
     assert_true($ver['status'] === 400, 'unsupported encryption version is rejected');
 
+    reset_rate_limit_files();
+
     $highIter = http_request('POST', $base . '/api/encryption', json_encode([
         'str' => 'hello',
         'key' => 'unit-test-key',
@@ -286,6 +398,108 @@ if ($opensslOk) {
         'iter' => 600000,
     ]), ['Content-Type' => 'application/json']);
     assert_true($highIter['status'] === 400, 'encryption iter above config max is rejected');
+
+    $saltHit = $payload;
+    $saltHit['salt'] = base64_encode(random_bytes(16));
+    $saltTamper = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => json_encode($saltHit),
+        'key' => 'unit-test-key',
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($saltTamper['status'] === 400, 'modified salt fails closed');
+
+    $ivHit = $payload;
+    $ivHit['iv'] = base64_encode(random_bytes(12));
+    $ivTamper = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => json_encode($ivHit),
+        'key' => 'unit-test-key',
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($ivTamper['status'] === 400, 'modified IV fails closed');
+
+    $tagHit = $payload;
+    $tagBytes = (string) base64_decode((string) $tagHit['tag'], true);
+    $tagBytes[0] = $tagBytes[0] === "\x00" ? "\x01" : "\x00";
+    $tagHit['tag'] = base64_encode($tagBytes);
+    $tagTamper = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => json_encode($tagHit),
+        'key' => 'unit-test-key',
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($tagTamper['status'] === 400, 'modified authentication tag fails closed');
+
+    $badMode = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => 'hello',
+        'key' => 'unit-test-key',
+        'mode' => 'encrypt-v2',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($badMode['status'] === 400, 'unknown encryption mode is rejected');
+
+    reset_rate_limit_files();
+
+    $v1 = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => "hello 🔐 café\n{\"a\":1}",
+        'key' => 'unit-test-key',
+        'mode' => 'encrypt',
+        'v' => 1,
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($v1['status'] === 200 && (($v1['json']['payload']['v'] ?? null) === 1), 'v=1 writes payload version 1');
+    assert_true(($v1['json']['version'] ?? null) === 1, 'v=1 response reports version 1');
+    assert_true(is_string($v1['json']['compact'] ?? null) && ($v1['json']['compact'] ?? '') !== '', 'v=1 also returns compact');
+
+    $v1Round = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => $v1['json']['output'] ?? '',
+        'key' => 'unit-test-key',
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true(
+        $v1Round['status'] === 200 && ($v1Round['json']['output'] ?? null) === "hello 🔐 café\n{\"a\":1}",
+        'decrypt auto-detects V1 JSON payload'
+    );
+
+    $v1CompactRound = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => $v1['json']['compact'] ?? '',
+        'key' => 'unit-test-key',
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true(
+        $v1CompactRound['status'] === 200 && ($v1CompactRound['json']['output'] ?? null) === "hello 🔐 café\n{\"a\":1}",
+        'decrypt auto-detects V1 compact payload'
+    );
+
+    $again = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => 'hello',
+        'key' => 'unit-test-key',
+        'mode' => 'encrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true(
+        $again['status'] === 200
+        && ($again['json']['payload']['ct'] ?? null) !== ($payload['ct'] ?? null)
+        && ($again['json']['payload']['salt'] ?? null) !== ($payload['salt'] ?? null)
+        && ($again['json']['compact'] ?? null) !== $compact,
+        'repeated encrypt produces different ciphertext and salt'
+    );
+
+    $empty = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => '',
+        'key' => 'unit-test-key',
+        'mode' => 'encrypt',
+    ]), ['Content-Type' => 'application/json']);
+    $emptyRound = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => $empty['json']['compact'] ?? '',
+        'key' => 'unit-test-key',
+        'mode' => 'decrypt',
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($empty['status'] === 200 && $emptyRound['status'] === 200 && ($emptyRound['json']['output'] ?? null) === '', 'empty plaintext round-trips');
+
+    $v1High = http_request('POST', $base . '/api/encryption', json_encode([
+        'str' => 'hello',
+        'key' => 'unit-test-key',
+        'mode' => 'encrypt',
+        'v' => 1,
+        'iter' => 600000,
+    ]), ['Content-Type' => 'application/json']);
+    assert_true($v1High['status'] === 400, 'v=1 still rejects iter above config max');
 } else {
     echo "SKIP — encryption tamper tests (OpenSSL unavailable on this PHP build)\n";
 }

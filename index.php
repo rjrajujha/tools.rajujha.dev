@@ -50,20 +50,20 @@ if ($page === null) {
 }
 
 $tools = [
-    ['password', 'Password Generator', 'Create strong random passwords', 'PW'],
-    ['hash', 'Hash', 'Hash text with SHA, MD5 or bcrypt', '#'],
-    ['timestamp', 'Timestamp', 'Convert Unix time and see current UTC', 'TS'],
-    ['json', 'JSON Decoder', 'Format, validate and inspect JSON', '{}'],
-    ['uuid', 'UUID Generator', 'Generate UUID v4 identifiers locally', 'ID'],
-    ['qr', 'QR Code Generator', 'Create QR codes in your browser', 'QR'],
-    ['regex', 'Regex Tester', 'Test regular expressions safely', '.*'],
-    ['base64', 'Base64', 'Encode and decode Base64 text', '64'],
-    ['jwt', 'JWT Decoder', 'Decode JWT header and payload locally', 'JWT'],
-    ['user-agent', 'User-Agent Parser', 'Inspect browser and device information', 'UA'],
-    ['markdown', 'Markdown Preview', 'Preview Markdown instantly in your browser', 'MD'],
-    ['ip', 'IP Checker', 'See IPv4 and IPv6 observed by this server', 'IP'],
-    ['secret', 'Secret Generator', 'Generate cryptographic random secrets', 'SX'],
-    ['encryption', 'Encrypt - Decrypt', 'Encrypt and decrypt text with a secret key', 'AE'],
+    ['password', 'Password Generator', 'Create strong random passwords'],
+    ['hash', 'Hash', 'Hash text with SHA, MD5 or bcrypt'],
+    ['timestamp', 'Timestamp', 'Convert Unix time and see current UTC'],
+    ['json', 'JSON Decoder', 'Format, validate and inspect JSON'],
+    ['uuid', 'UUID Generator', 'Generate UUID v4 identifiers locally'],
+    ['qr', 'QR Code Generator', 'Create QR codes in your browser'],
+    ['regex', 'Regex Tester', 'Test regular expressions safely'],
+    ['base64', 'Base64', 'Encode and decode Base64 text'],
+    ['jwt', 'JWT Decoder', 'Decode JWT header and payload locally'],
+    ['user-agent', 'User-Agent Parser', 'Inspect browser and device information'],
+    ['markdown', 'Markdown Preview', 'Preview Markdown instantly in your browser'],
+    ['ip', 'IP Checker', 'See IPv4 and IPv6 observed by this server'],
+    ['secret', 'Secret Generator', 'Generate cryptographic random secrets'],
+    ['encryption', 'Encrypt-Decrypt', 'Encrypt and decrypt text with a secret key'],
 ];
 
 $security = app_security();
@@ -96,9 +96,12 @@ $meta = [
     'encryption' => [
         '/api/encryption',
         'POST',
-        'str, key, mode, iter',
-        'UI uses Web Crypto AES-256-GCM locally and never sends plaintext or keys to the server. '
-            . 'API requires POST JSON. Algorithm: AES-256-GCM. KDF: PBKDF2-HMAC-SHA-256. '
+        'str, key, mode, v, iter',
+        'UI encrypts and decrypts locally with Web Crypto and never sends plaintext or keys to the server. '
+            . 'mode is encrypt or decrypt. For encrypt, optional v selects the format: omit or v=2 for current (AAD-bound), v=1 for legacy JSON compatibility. Unsupported v values are rejected. '
+            . 'Encrypt produces both compact opaque Base64 and structured JSON/Object from one operation. Base64 is encoding, not encryption. '
+            . 'Decrypt auto-detects compact Base64, v2 JSON, v1 JSON, and the older binary blob. '
+            . 'Algorithm is always AES-256-GCM. KDF is always PBKDF2-HMAC-SHA-256. '
             . 'encryption_iterations (default) is ' . number_format($encIter) . '; '
             . 'max_encryption_iterations (API ceiling) is ' . number_format($maxEncIter) . '. '
             . 'Anyone with the secret key can decrypt. '
@@ -115,7 +118,7 @@ $examples = [
     'user-agent' => '/api/user-agent',
     'ip' => '/api/ip',
     'secret' => '/api/secret?length=48&format=hex',
-    'encryption' => "POST /api/encryption\nContent-Type: application/json\n{\"str\":\"hello\",\"key\":\"your-secret\",\"mode\":\"encrypt\"}",
+    'encryption' => "POST /api/encryption\nContent-Type: application/json\n{\"str\":\"hello\",\"key\":\"your-secret\",\"mode\":\"encrypt\"}\n\n# Optional: {\"v\":1,...} for legacy format; omit v or use 2 for current\n# Decrypt accepts compact, JSON v2/v1, or legacy binary\n{\"str\":\"<compact-or-json>\",\"key\":\"your-secret\",\"mode\":\"decrypt\"}",
 ];
 
 $cssVersion = (string) @filemtime(__DIR__ . '/assets/app.css');
@@ -149,6 +152,32 @@ $iconBtn = 'inline-flex size-10 touch-manipulation items-center justify-center r
 $iconSvg = 'size-5 fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.8]';
 $stat = 'rounded-2xl border border-[#dbe8ce] bg-moss px-4 py-4 text-left sm:px-5';
 $check = 'inline-flex min-h-11 items-center gap-2 px-1 text-sm text-ink';
+
+function tool_icon(string $slug, string $sizeClass = 'size-5'): string
+{
+    $inner = [
+        'password' => '<circle cx="8" cy="11" r="3.5"/><path d="M11.5 11H20v2.5M16 11v2.5M19 11v4"/>',
+        'hash' => '<path d="M9 4 7 20M17 4l-2 16M4 9h16M3 15h16"/>',
+        'timestamp' => '<circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 1.5"/>',
+        'json' => '<path d="M8 5c-2.2 0-3 1.6-3 3.2v1.6c0 1.1-.8 1.7-2 1.7 1.2 0 2 .6 2 1.7v1.6c0 1.6.8 3.2 3 3.2"/><path d="M16 5c2.2 0 3 1.6 3 3.2v1.6c0 1.1.8 1.7 2 1.7-1.2 0-2 .6-2 1.7v1.6c0 1.6-.8 3.2-3 3.2"/>',
+        'uuid' => '<rect x="4.5" y="4.5" width="15" height="15" rx="3"/><path d="M8 9h8M8 12h5M8 15h6"/>',
+        'qr' => '<rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><path d="M14 14h3v3h-3zM18.5 14H20v6h-6v-1.5h4.5z"/>',
+        'regex' => '<path d="M7 18 15 6"/><path d="M16 14.5h4M18 12.5v4"/><circle cx="18" cy="16.5" r="0.4" fill="currentColor" stroke="none"/>',
+        'base64' => '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8M8 12h5M8 15h7"/>',
+        'jwt' => '<rect x="6" y="4.5" width="12" height="4" rx="1"/><rect x="5" y="10" width="14" height="4" rx="1"/><rect x="6" y="15.5" width="12" height="4" rx="1"/>',
+        'user-agent' => '<rect x="3.5" y="5" width="17" height="11" rx="2"/><path d="M8 20h8M12 16v4"/>',
+        'markdown' => '<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M8 15.5v-7l2.2 3.2L12.4 8.5v7M15 8.5v7l2.2-3"/>',
+        'ip' => '<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.8 2.8 2.8 13.2 0 16M12 4c-2.8 2.8-2.8 13.2 0 16"/>',
+        'secret' => '<path d="M12 3.5 19 7v4.5c0 4.4-3.1 7.3-7 8.2-3.9-.9-7-3.8-7-8.2V7l7-3.5z"/><circle cx="12" cy="11" r="1.6"/><path d="M12 12.6V15"/>',
+        'encryption' => '<rect x="6" y="11" width="12" height="9" rx="2"/><path d="M8.5 11V8.2a3.5 3.5 0 0 1 7 0V11"/><path d="M12 14.2v2.2"/>',
+    ];
+
+    $markup = $inner[$slug] ?? '<circle cx="12" cy="12" r="7"/>';
+
+    return '<svg class="' . $sizeClass . ' fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.8]" viewBox="0 0 24 24" aria-hidden="true">'
+        . $markup
+        . '</svg>';
+}
 
 function apiDocs(string $page, array $meta, array $examples): void
 {
@@ -193,6 +222,7 @@ function apiDocs(string $page, array $meta, array $examples): void
   <meta name="twitter:description" content="<?= esc($description) ?>">
   <link rel="canonical" href="<?= esc($canonical) ?>">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/favicon.svg">
   <link rel="manifest" href="/site.webmanifest">
   <title><?= esc($title) ?></title>
   <link rel="stylesheet" href="/assets/app.css?v=<?= esc($cssVersion) ?>">
@@ -226,9 +256,9 @@ function apiDocs(string $page, array $meta, array $examples): void
         <input id="toolSearch" type="search" class="<?= $field ?>" placeholder="Type a tool name" autocomplete="off" spellcheck="false">
       </div>
       <div class="max-h-[min(60vh,28rem)] overflow-y-auto p-2" id="searchResults">
-        <?php foreach ($tools as [$slug, $name, $desc, $icon]): ?>
+        <?php foreach ($tools as [$slug, $name, $desc]): ?>
           <a class="flex items-start gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-soft" data-search-item data-search="<?= esc($name . ' ' . $desc . ' ' . $slug) ?>" href="/<?= esc($slug) ?>">
-            <span class="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-moss text-[10px] font-extrabold tracking-wide text-ink"><?= esc($icon) ?></span>
+            <span class="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-moss text-ink"><?= tool_icon($slug, 'size-4') ?></span>
             <span class="min-w-0">
               <span class="block truncate text-sm font-bold text-ink"><?= esc($name) ?></span>
               <span class="mt-0.5 block truncate text-xs text-muted"><?= esc($desc) ?></span>
@@ -250,9 +280,9 @@ function apiDocs(string $page, array $meta, array $examples): void
     </section>
 
     <section class="mt-8 grid grid-cols-1 gap-3 sm:mt-10 sm:grid-cols-2 lg:grid-cols-3" aria-label="Available tools">
-      <?php foreach ($tools as [$slug, $name, $desc, $icon]): ?>
+      <?php foreach ($tools as [$slug, $name, $desc]): ?>
         <a class="group flex h-full items-start gap-3 rounded-2xl border border-line bg-white/80 p-4 text-left transition hover:border-leaf/30 hover:shadow-lg hover:shadow-ink/5 motion-safe:hover:-translate-y-0.5 sm:gap-4 sm:p-5" href="/<?= esc($slug) ?>">
-          <span class="mt-0.5 grid size-11 shrink-0 place-items-center rounded-xl bg-moss text-xs font-extrabold tracking-wide text-ink"><?= esc($icon) ?></span>
+          <span class="mt-0.5 grid size-11 shrink-0 place-items-center rounded-xl bg-moss text-ink"><?= tool_icon($slug, 'size-5') ?></span>
           <span class="min-w-0 flex-1">
             <h2 class="text-base font-bold leading-snug text-ink group-hover:text-leaf"><?= esc($name) ?></h2>
             <p class="mt-1 line-clamp-2 min-h-10 text-sm leading-5 text-muted"><?= esc($desc) ?></p>
@@ -268,7 +298,10 @@ function apiDocs(string $page, array $meta, array $examples): void
         <span aria-hidden="true">/</span>
         <span class="text-ink" aria-current="page"><?= esc($toolName) ?></span>
       </nav>
-      <h1 class="text-2xl font-bold tracking-tight text-ink sm:text-3xl"><?= esc($toolName) ?></h1>
+      <h1 class="flex items-center gap-3 text-2xl font-bold tracking-tight text-ink sm:text-3xl">
+        <span class="grid size-11 shrink-0 place-items-center rounded-xl bg-moss text-ink"><?= tool_icon($page, 'size-5') ?></span>
+        <span><?= esc($toolName) ?></span>
+      </h1>
       <p class="mt-1 max-w-2xl text-sm leading-relaxed text-muted"><?= esc($toolDesc) ?></p>
     </section>
 
@@ -499,28 +532,50 @@ function apiDocs(string $page, array $meta, array $examples): void
       <p class="<?= $hint ?>">Generated locally with the Web Crypto API.</p>
 
 <?php elseif ($page === 'encryption'): ?>
-      <label class="<?= $label ?>" for="input">String / Input</label>
+      <label class="<?= $label ?>" for="mode">Mode</label>
+      <select id="mode" class="<?= $field ?>" autocomplete="off">
+        <option value="encrypt" selected>Encrypt</option>
+        <option value="decrypt">Decrypt</option>
+      </select>
+      <label class="<?= $label ?> mt-4" for="input" id="inputLabel">String / Input</label>
       <textarea id="input" rows="5" placeholder="Hello world" class="<?= $field ?>" spellcheck="false"></textarea>
       <label class="<?= $label ?> mt-4" for="key">Secret Key</label>
       <input id="key" value="" autocomplete="off" class="<?= $field ?>" spellcheck="false" placeholder="A long random secret">
       <p class="mt-2 text-sm leading-relaxed text-ink">🔐 Use <a class="font-semibold text-leaf underline underline-offset-2 hover:text-ink" href="/secret">/secret</a> to generate a strong secret key.</p>
-      <ul class="<?= $hint ?> mt-2 list-disc space-y-1 pl-4">
-        <li>For sensitive data, use a long, randomly generated secret instead of a memorable password.</li>
-        <li>Your secret key is not stored by this tool.</li>
-        <li>Anyone with your secret key can decrypt your data.</li>
-      </ul>
-      <div class="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
-        <select id="mode" class="<?= $field ?>">
-          <option value="encrypt">Encrypt</option>
-          <option value="decrypt">Decrypt</option>
-        </select>
-        <button class="<?= $btnPrimary ?>" id="run" type="button">Run</button>
+      <p class="<?= $hint ?> mt-2">For sensitive data, use a long, randomly generated secret instead of a memorable password.</p>
+      <div class="mt-4">
+        <button class="<?= $btnPrimary ?>" id="run" type="button" data-label="Encrypt">Encrypt</button>
       </div>
-      <div class="<?= $result ?>">
-        <pre id="output" class="<?= $resultBody ?>" aria-live="polite"></pre>
-        <button id="copy" type="button" class="<?= $btn ?>">Copy</button>
+
+      <div id="encryptOutputs" class="mt-4 space-y-3" hidden>
+        <article class="rounded-2xl border border-line bg-soft p-4">
+          <h2 class="text-sm font-extrabold text-ink">Compact Encrypted Text</h2>
+          <p class="mt-1 text-xs leading-relaxed text-muted">Encrypted output as a compact opaque Base64 text representation.</p>
+          <pre id="compactOutput" class="mt-3 min-h-12 overflow-x-auto whitespace-pre-wrap break-words font-mono text-sm text-ink" aria-live="polite"></pre>
+          <button id="copyCompact" type="button" class="<?= $btn ?> mt-3">Copy</button>
+        </article>
+        <article class="rounded-2xl border border-line bg-soft p-4">
+          <h2 class="text-sm font-extrabold text-ink">Encrypted JSON / Object</h2>
+          <p class="mt-1 text-xs leading-relaxed text-muted">Structured encrypted output containing the encryption metadata and ciphertext.</p>
+          <pre id="jsonOutput" class="mt-3 min-h-12 overflow-x-auto whitespace-pre-wrap break-words font-mono text-sm text-ink" aria-live="polite"></pre>
+          <button id="copyJson" type="button" class="<?= $btn ?> mt-3">Copy</button>
+        </article>
+        <p class="text-xs leading-relaxed text-muted">Both cards are the same encryption result. Base64 is encoding, not encryption. The secret key is never included.</p>
       </div>
-      <p class="<?= $hint ?>">AES-256-GCM with PBKDF2-HMAC-SHA-256 runs entirely in your browser. Plaintext and the secret key are never sent to the server from this page. Press Ctrl+Enter to run.</p>
+
+      <div id="decryptOutputs" class="<?= $result ?>" hidden>
+        <div class="min-w-0 flex-1">
+          <p class="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Decrypted Text</p>
+          <pre id="decryptOutput" class="<?= $resultBody ?> mt-0" aria-live="polite"></pre>
+        </div>
+        <button id="copyDecrypt" type="button" class="<?= $btn ?>">Copy</button>
+      </div>
+
+      <div id="encError" class="<?= $result ?>" hidden>
+        <pre id="errorOutput" class="<?= $resultBody ?> text-ink" aria-live="polite"></pre>
+      </div>
+
+      <p class="<?= $hint ?>" id="encHint">AES-256-GCM with PBKDF2-HMAC-SHA-256 runs entirely in your browser. Encrypt shows both compact Base64 and JSON from one operation. Press Ctrl+Enter to run.</p>
 <?php endif; ?>
     </section>
     <?php apiDocs($page, $meta[$page], $examples); ?>
