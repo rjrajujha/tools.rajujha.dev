@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+@source "../index.php";
+@source "../bootstrap.php";
+@source "../assets/app.js";
+
+@theme {
+  --font-sans: "Segoe UI", system-ui, ui-sans-serif, sans-serif;
+  --font-mono: "Cascadia Mono", "Segoe UI Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --color-ink: #17211b;
+  --color-muted: #68736c;
+  --color-line: #dfe4df;
+  --color-soft: #f3f6f0;
+  --color-panel: #fafbf9;
+  --color-leaf: #70805e;
+  --color-accent: #b8f04a;
+  --color-moss: #edf4e5;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-soft font-sans text-ink antialiased;
+    min-height: 100dvh;
+    background-image:
+      radial-gradient(circle at 88% -10%, #e7f5c9 0, transparent 32%),
+      linear-gradient(180deg, #f8faf5 0%, #f3f6f0 45%, #eef2ea 100%);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  ::selection {
+    @apply bg-accent/40 text-ink;
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-leaf) 70%, var(--color-ink));
+    outline-offset: 3px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Vendor-only controls and generated markup that cannot take utility classes. */
+@layer components {
+  dialog::backdrop {
+    background: color-mix(in oklab, var(--color-ink) 42%, transparent);
+    backdrop-filter: blur(6px);
+  }
+
+  input[type="range"] {
+    @apply h-11 w-full cursor-pointer appearance-none bg-transparent;
+    accent-color: var(--color-ink);
+  }
+
+  input[type="range"]::-webkit-slider-runnable-track {
+    @apply h-1.5 rounded-full bg-line;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    @apply mt-[-5px] size-4 appearance-none rounded-full border-2 border-white bg-ink shadow-sm;
+  }
+
+  input[type="range"]::-moz-range-track {
+    @apply h-1.5 rounded-full bg-line;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    @apply size-4 rounded-full border-2 border-white bg-ink;
+  }
+
+  .markdown-preview :where(h1, h2, h3, h4, h5, h6) {
+    @apply tracking-tight text-ink;
+    line-height: 1.2;
+  }
+
+  .markdown-preview h1 {
+    @apply mb-3 mt-0 text-2xl font-bold sm:text-3xl;
+  }
+
+  .markdown-preview h2 {
+    @apply mb-3 mt-6 text-xl font-bold sm:text-2xl;
+  }
+
+  .markdown-preview h3 {
+    @apply mb-2 mt-5 text-lg font-semibold sm:text-xl;
+  }
+
+  .markdown-preview p,
+  .markdown-preview ul,
+  .markdown-preview blockquote {
+    @apply my-3;
+  }
+
+  .markdown-preview ul {
+    @apply list-disc pl-5;
+  }
+
+  .markdown-preview a {
+    @apply text-leaf underline underline-offset-2;
+  }
+
+  .markdown-preview blockquote {
+    @apply border-l-4 border-line pl-4 text-muted;
+  }
+
+  .markdown-preview pre {
+    @apply overflow-x-auto rounded-xl bg-ink p-3 text-sm text-white sm:p-4;
+  }
+
+  .markdown-preview code {
+    @apply font-mono text-[0.92em];
+  }
+
+  .markdown-preview :not(pre) > code {
+    @apply rounded-md bg-moss px-1.5 py-0.5;
+  }
+}

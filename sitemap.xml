@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://tools.rajujha.dev/</loc></url>
+  <url><loc>https://tools.rajujha.dev/password</loc></url>
+  <url><loc>https://tools.rajujha.dev/hash</loc></url>
+  <url><loc>https://tools.rajujha.dev/timestamp</loc></url>
+  <url><loc>https://tools.rajujha.dev/json</loc></url>
+  <url><loc>https://tools.rajujha.dev/uuid</loc></url>
+  <url><loc>https://tools.rajujha.dev/qr</loc></url>
+  <url><loc>https://tools.rajujha.dev/regex</loc></url>
+  <url><loc>https://tools.rajujha.dev/base64</loc></url>
+  <url><loc>https://tools.rajujha.dev/jwt</loc></url>
+  <url><loc>https://tools.rajujha.dev/user-agent</loc></url>
+  <url><loc>https://tools.rajujha.dev/markdown</loc></url>
+  <url><loc>https://tools.rajujha.dev/ip</loc></url>
+  <url><loc>https://tools.rajujha.dev/secret</loc></url>
+  <url><loc>https://tools.rajujha.dev/encryption</loc></url>
+</urlset>

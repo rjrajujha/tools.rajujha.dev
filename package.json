@@ -1,0 +1,13 @@
+{
+  "name": "tools.rajujha.dev",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:css",
+    "build:css": "tailwindcss -i ./src/input.css -o ./assets/app.css --minify",
+    "watch:css": "tailwindcss -i ./src/input.css -o ./assets/app.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.11",
+    "tailwindcss": "^4.1.11"
+  }
+}

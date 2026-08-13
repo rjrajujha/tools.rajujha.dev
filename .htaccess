@@ -1,0 +1,39 @@
+Options -Indexes
+ServerSignature Off
+AddDefaultCharset UTF-8
+AddType application/manifest+json .webmanifest
+AddType image/svg+xml .svg
+RewriteEngine On
+
+# Local-only front controller and non-public project files.
+RewriteRule ^(?:router|bootstrap)\.php$ - [F,L,NC]
+RewriteRule ^(?:\.git|\.env|composer\.(?:json|lock)|package(?:-lock)?\.json|README\.md|LICENSE|src)(?:/|$) - [F,L,NC]
+RewriteRule ^node_modules(?:/|$) - [F,L,NC]
+
+<FilesMatch "^(?:\.htaccess|\.gitignore|.*\.bak|.*\.log)$">
+  Require all denied
+</FilesMatch>
+
+RewriteRule ^api/(password|hash|timestamp|uuid|base64|user-agent|ip|secret|encryption)/?$ /api.php?tool=$1 [QSA,L,NC]
+RewriteRule ^/?$ /index.php [L]
+RewriteRule ^(password|hash|timestamp|json|uuid|qr|regex|base64|jwt|user-agent|markdown|ip|secret|encryption)/?$ /index.php [QSA,L]
+
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+RewriteRule ^ /index.php [L]
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data: https://api.qrserver.com; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+
+  <FilesMatch "\.(?:css|js)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "\.(?:svg|ico|webmanifest|xml|txt)$">
+    Header set Cache-Control "public, max-age=86400"
+  </FilesMatch>
+</IfModule>
