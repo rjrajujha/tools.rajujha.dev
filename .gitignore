@@ -20,3 +20,4 @@ Thumbs.db
 # Runtime / local artifacts
 /var/
 /tmp-report.md
+/tmp-audit-report.md

@@ -2,8 +2,6 @@
 
 Fast, private developer utilities. No accounts, no analytics, no database, no tracking.
 
-Version **1.0.0**. Live site: [tools.rajujha.dev](https://tools.rajujha.dev)
-
 PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tools run in the browser. Optional JSON APIs exist for scripts. There is no framework and no application-side storage of user input.
 
 ## Features
@@ -42,7 +40,7 @@ PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tool
 - Sensitive APIs (`hash`, `base64`, `encryption`) require POST — do not put secrets or plaintext in query strings
 - Encrypt-Decrypt runs locally in the browser when Web Crypto is available; the UI does not silently fall back to the API
 - bcrypt and encryption iteration ceilings come from `config.json`
-- Application rate limiting protects expensive endpoints; identity uses `REMOTE_ADDR` (hashed on disk). Proxy headers are not trusted by default
+- Application rate limiting protects expensive endpoints; identity uses `REMOTE_ADDR` (hashed on disk). Proxy headers are not trusted by default. Set `client_ip.trust_cloudflare` only when the origin accepts traffic exclusively from Cloudflare
 
 Strength of encryption depends on secret entropy and correct use. This is not a claim that any scheme is unbreakable.
 
@@ -62,14 +60,27 @@ PHP’s built-in server must use `router.php`. Do not expose `router.php` as a p
 
 ## API usage
 
-Responses use a shared envelope plus tool-specific fields:
+Every JSON API response uses this envelope. Result fields live **only** inside `data` — never duplicated at the root.
 
 ```json
 {
   "ok": true,
-  "tool": "hash",
-  "data": {},
+  "tool": "uuid",
+  "data": {
+    "uuid": "..."
+  },
   "error": null
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "tool": "hash",
+  "data": null,
+  "error": "A useful error message"
 }
 ```
 
@@ -88,65 +99,39 @@ Content-Type: application/json
 {"str":"hello","key":"your-secret","mode":"encrypt"}
 ```
 
-**Encrypt**
+- `mode` is `encrypt` or `decrypt`
+- Optional `v`: omit or `2` for current (AAD-bound); `v=1` for legacy JSON without AAD; other values are rejected
+- Encrypt returns `data.version`, `data.compact`, and `data.json` from one operation
+- Algorithm and KDF are fixed (AES-256-GCM, PBKDF2-HMAC-SHA-256). Iteration defaults/ceilings come from `config.json` (currently 310000)
+- Decrypt auto-detects compact Base64, V2/V1 JSON, and the older binary blob
+- UI always encrypts with V2 and never exposes V1 as a mode
 
-- `mode` must be `encrypt` or `decrypt`
-- Optional `v` selects the encryption format for encrypt:
-  - omit `v` → **v = 2** (default, recommended)
-  - `v = 2` → current format (AES-256-GCM, PBKDF2-HMAC-SHA-256, AAD-bound metadata)
-  - `v = 1` → legacy JSON format without AAD (API compatibility only)
-  - any other `v` → rejected
-- V2 encrypt returns both `compact` (opaque Base64) and `json`/`payload` (structured object) from **one** encryption. `output` remains the pretty-printed JSON string for compatibility. Base64 is encoding, not encryption.
-- Algorithm and KDF are not client-selectable. Iteration defaults/ceilings come from `config.json` (`encryption_iterations` / `max_encryption_iterations`, currently 310000)
-
-**Decrypt**
-
-- Auto-detects compact Base64, V2 JSON, V1 JSON, and the older binary blob
-- No `decrypt-v1` / `decrypt-v2` mode selection
-
-The UI only offers Encrypt and Decrypt. It always encrypts with V2 and never exposes V1 as a mode. Generate secrets at `/secret`.
-
-Example V2 payload:
+Example encrypt response:
 
 ```json
 {
-  "v": 2,
-  "alg": "AES-256-GCM",
-  "kdf": "PBKDF2-SHA256",
-  "iter": 310000,
-  "salt": "<base64>",
-  "iv": "<base64>",
-  "ct": "<base64>",
-  "tag": "<base64>"
+  "ok": true,
+  "tool": "encryption",
+  "data": {
+    "mode": "encrypt",
+    "version": 2,
+    "compact": "...",
+    "json": {
+      "v": 2,
+      "alg": "AES-256-GCM",
+      "kdf": "PBKDF2-SHA256",
+      "iter": 310000,
+      "salt": "<base64>",
+      "iv": "<base64>",
+      "ct": "<base64>",
+      "tag": "<base64>"
+    }
+  },
+  "error": null
 }
 ```
 
-## Configuration
-
-`config.json` holds author/version metadata, security ceilings, and rate-limit policy. It is not web-accessible. Do not put credentials in it.
-
-```json
-{
-  "author": "Raju Jha",
-  "version": "1.0.0",
-  "security": {
-    "bcrypt_cost": 12,
-    "max_bcrypt_cost": 14,
-    "encryption_iterations": 310000,
-    "max_encryption_iterations": 310000
-  },
-  "rate_limit": {
-    "enabled": true,
-    "requests": 20,
-    "window_seconds": 60
-  },
-  "client_ip": {
-    "trust_cloudflare": false
-  }
-}
-```
-
-Invalid configuration fails safely. Missing `rate_limit.enabled` keeps limiting **on**. Set `"enabled": false` only to opt out explicitly. Absolute ceilings prevent absurd values.
+V1 payloads remain decryptable for compatibility. New `v=1` encrypts omit AAD and are not recommended. Decrypt uses the `iter` stored in the payload (subject to the API ceiling).
 
 ## Deployment
 

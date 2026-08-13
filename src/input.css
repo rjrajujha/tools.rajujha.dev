@@ -19,14 +19,13 @@
 
 @layer base {
   html {
+    @apply scroll-smooth antialiased;
     color-scheme: light;
-    scroll-behavior: smooth;
     -webkit-text-size-adjust: 100%;
   }
 
   body {
-    @apply bg-soft font-sans text-ink antialiased;
-    min-height: 100dvh;
+    @apply min-h-dvh bg-soft font-sans text-ink;
     background-image:
       radial-gradient(circle at 88% -10%, #e7f5c9 0, transparent 32%),
       linear-gradient(180deg, #f8faf5 0%, #f3f6f0 45%, #eef2ea 100%);
@@ -102,8 +101,7 @@
   }
 
   .markdown-preview :where(h1, h2, h3, h4, h5, h6) {
-    @apply tracking-tight text-ink;
-    line-height: 1.2;
+    @apply leading-tight tracking-tight text-ink;
   }
 
   .markdown-preview h1 {

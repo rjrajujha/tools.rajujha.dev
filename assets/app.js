@@ -75,6 +75,15 @@
 
     showToast('Copied');
     if (!button) return;
+
+    if (button.dataset.copyMode === 'icon') {
+      button.classList.add('border-leaf/50', 'bg-moss', 'text-ink');
+      window.setTimeout(() => {
+        button.classList.remove('border-leaf/50', 'bg-moss', 'text-ink');
+      }, 900);
+      return;
+    }
+
     const original = button.dataset.label || button.textContent;
     button.dataset.label = original;
     button.textContent = 'Copied';
@@ -213,14 +222,20 @@
 
   async function api(params, method = 'GET') {
     const post = method === 'POST';
-    const response = await fetch(post ? '/api.php' : '/api.php?' + new URLSearchParams(params), {
-      method: post ? 'POST' : 'GET',
-      headers: {
-        Accept: 'application/json',
-        ...(post ? { 'Content-Type': 'application/json' } : {}),
-      },
-      body: post ? JSON.stringify(params) : undefined,
-    });
+    let response;
+    try {
+      response = await fetch(post ? '/api.php' : '/api.php?' + new URLSearchParams(params), {
+        method: post ? 'POST' : 'GET',
+        headers: {
+          Accept: 'application/json',
+          ...(post ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: post ? JSON.stringify(params) : undefined,
+      });
+    } catch {
+      throw Error('Network error. Check your connection and try again.');
+    }
+
     const text = await response.text();
     let data = null;
     try {
@@ -404,7 +419,7 @@
           }
         }
 
-        const data = await api(
+        const response = await api(
           {
             tool: 'hash',
             str: value,
@@ -413,11 +428,12 @@
           },
           'POST'
         );
+        const body = response.data || {};
         setResult(
           $('#output'),
           algorithm === 'all'
-            ? JSON.stringify(data.hashes || data.data?.hashes || data, null, 2)
-            : data.hash || data.data?.hash || JSON.stringify(data, null, 2)
+            ? JSON.stringify(body.hashes || {}, null, 2)
+            : body.hash || JSON.stringify(body, null, 2)
         );
       } catch (error) {
         setResult($('#output'), error.message);
@@ -676,6 +692,11 @@
           result = await runInWorker(source, flags, value);
         } catch (error) {
           if (error instanceof Error && error.message === 'worker unavailable') {
+            if (value.length > 10000 || source.length > 64) {
+              throw Error(
+                'Regex worker unavailable for this input size. Use a modern browser, or shorten the pattern/test string.'
+              );
+            }
             result = runLocal(source, flags, value);
           } else {
             throw error;
@@ -1020,14 +1041,15 @@
       const button = $('#run');
       setBusy(button, true, 'Checking…');
       try {
-        const data = await api({ tool: 'ip' });
+        const response = await api({ tool: 'ip' });
+        const data = response.data || {};
         $('#ipOutput').textContent = data.ip || 'Not detected on this connection';
         $('#ipVersion').textContent = data.version
           ? `IPv${data.version} detected · server-observed REMOTE_ADDR`
           : 'No valid REMOTE_ADDR on this connection';
         setFamily(4, data.ipv4);
         setFamily(6, data.ipv6);
-        setResult($('#ipDetails'), JSON.stringify(data.data || data, null, 2));
+        setResult($('#ipDetails'), JSON.stringify(data, null, 2));
       } catch (error) {
         $('#ipOutput').textContent = 'Error';
         $('#ipVersion').textContent = error.message;
@@ -1301,8 +1323,8 @@
       }
       if (hint) {
         hint.textContent = decrypting
-          ? 'Decrypt auto-detects compact Base64, current JSON, older JSON, and the legacy binary blob. Processing stays in your browser. Press Ctrl+Enter to run.'
-          : 'AES-256-GCM with PBKDF2-HMAC-SHA-256 runs entirely in your browser. One Encrypt produces both compact Base64 and JSON. Press Ctrl+Enter to run.';
+          ? 'Paste encrypted compact or JSON input, choose Decrypt, then run. Format is auto-detected. Ctrl+Enter to run.'
+          : 'Enter text and a secret, choose Encrypt, then run. One Encrypt yields compact and JSON. Ctrl+Enter to run.';
       }
       hideResults();
     };
@@ -1357,6 +1379,15 @@
     $('#copyDecrypt')?.addEventListener('click', () => copyText($('#decryptOutput')?.textContent, $('#copyDecrypt')));
   }
 
+  function initApiExampleCopy() {
+    document.querySelectorAll('[data-copy-target]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const target = document.querySelector(button.getAttribute('data-copy-target') || '');
+        copyText(target?.textContent || '', button);
+      });
+    });
+  }
+
   const boot = {
     password: initPassword,
     hash: initHash,
@@ -1374,6 +1405,16 @@
     encryption: initEncryption,
   };
 
-  initSearch();
-  boot[tool]?.();
+  try {
+    initSearch();
+    initApiExampleCopy();
+    boot[tool]?.();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to initialize this tool.';
+    showToast(message);
+    const fallback = $('#output') || $('#errorOutput') || $('#passwordOut') || $('#secretOutput');
+    if (fallback) {
+      setResult(fallback, message);
+    }
+  }
 })();

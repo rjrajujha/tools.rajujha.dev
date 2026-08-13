@@ -76,7 +76,7 @@ function app_config_defaults(): array
 {
     return [
         'author' => 'Raju Jha',
-        'version' => '1.0.0',
+        'version' => '1.1.0',
         'security' => [
             'bcrypt_cost' => 12,
             'max_bcrypt_cost' => 14,
@@ -473,11 +473,11 @@ function app_json_encode(array $payload): string
 {
     $json = json_encode(
         $payload,
-        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
     );
 
     if (!is_string($json) || $json === '') {
-        return "{\n    \"ok\": false,\n    \"tool\": null,\n    \"data\": null,\n    \"error\": \"Unable to encode response\"\n}";
+        return '{"ok":false,"tool":null,"data":null,"error":"Unable to encode response"}';
     }
 
     return $json;
@@ -492,15 +492,17 @@ function json_error_response(string $message, int $status = 500, array $extra = 
         header('X-Content-Type-Options: nosniff');
     }
 
-    echo app_json_encode(array_merge(
-        [
-            'ok' => false,
-            'tool' => null,
-            'data' => null,
-            'error' => $message,
-        ],
-        $extra
-    ));
+    $data = null;
+    if (isset($extra['detail']) && is_string($extra['detail']) && $extra['detail'] !== '') {
+        $data = ['detail' => $extra['detail']];
+    }
+
+    echo app_json_encode([
+        'ok' => false,
+        'tool' => $extra['tool'] ?? null,
+        'data' => $data,
+        'error' => $message,
+    ]);
     exit;
 }
 

@@ -1,6 +1,6 @@
 {
   "author": "Raju Jha",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "security": {
     "bcrypt_cost": 12,
     "max_bcrypt_cost": 14,

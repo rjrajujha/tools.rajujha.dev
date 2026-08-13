@@ -15,27 +15,25 @@ function out(array $payload, int $status = 200): never
     http_response_code($status);
 
     $ok = array_key_exists('ok', $payload) ? (bool) $payload['ok'] : $status < 400;
-    $envelope = [
+    $data = $payload['data'] ?? ($ok ? new stdClass() : null);
+
+    echo app_json_encode([
         'ok' => $ok,
         'tool' => $payload['tool'] ?? null,
-        'data' => $payload['data'] ?? ($ok ? new stdClass() : null),
+        'data' => $data,
         'error' => $payload['error'] ?? null,
-    ];
-
-    unset($payload['ok'], $payload['tool'], $payload['data'], $payload['error']);
-
-    echo app_json_encode(array_merge($envelope, $payload));
+    ]);
     exit;
 }
 
 function ok(string $tool, array $data): never
 {
-    out(array_merge([
+    out([
         'ok' => true,
         'tool' => $tool,
         'data' => $data,
         'error' => null,
-    ], $data));
+    ]);
 }
 
 function fail(string $message, int $status = 400, ?string $tool = null): never
@@ -886,14 +884,11 @@ if ($tool === 'ip') {
         'ipv6' => $ipv6,
         'ipv4_status' => $ipv4 !== null ? 'detected' : 'not_detected',
         'ipv6_status' => $ipv6 !== null ? 'detected' : 'not_detected',
-        'remote_addr' => $remote !== '' ? $remote : null,
         'proxy_headers' => [
             'trusted' => false,
             'x_real_ip' => $xRealIp !== '' ? $xRealIp : null,
             'x_forwarded_for' => $xForwardedFor !== '' ? $xForwardedFor : null,
         ],
-        'x_real_ip' => $xRealIp,
-        'x_forwarded_for' => $xForwardedFor,
         'note' => 'ipv4/ipv6 reflect REMOTE_ADDR for this TCP connection only. A connection is one address family, so the other family is not detected here. X-Forwarded-For and X-Real-IP are listed for inspection and are not trusted.',
     ]);
 }
@@ -963,18 +958,12 @@ if ($tool === 'encryption') {
         $version = encryption_request_version();
         $payload = encrypt_payload($str, $key, $iterations, $version);
         $compact = encrypt_compact_encode($payload);
-        $output = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
 
         ok('encryption', [
             'mode' => 'encrypt',
             'version' => $version,
-            'algorithm' => 'AES-256-GCM',
-            'kdf' => 'PBKDF2-HMAC-SHA-256',
-            'iterations' => $iterations,
-            'payload' => $payload,
-            'json' => $payload,
             'compact' => $compact,
-            'output' => $output,
+            'json' => $payload,
         ]);
     }
 
@@ -987,7 +976,6 @@ if ($tool === 'encryption') {
 
         ok('encryption', [
             'mode' => 'decrypt',
-            'algorithm' => 'AES-256-GCM',
             'output' => $plain,
         ]);
     }
