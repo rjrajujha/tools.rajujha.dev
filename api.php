@@ -7,14 +7,110 @@ header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, private');
 header('X-Content-Type-Options: nosniff');
 
+const APP_SENSITIVE_TOOLS = ['hash', 'base64', 'encryption'];
+
 function out(array $payload, int $status = 200): never
 {
     http_response_code($status);
+
+    $ok = array_key_exists('ok', $payload) ? (bool) $payload['ok'] : $status < 400;
+    $envelope = [
+        'ok' => $ok,
+        'tool' => $payload['tool'] ?? null,
+        'data' => $payload['data'] ?? ($ok ? new stdClass() : null),
+        'error' => $payload['error'] ?? null,
+    ];
+
+    unset($payload['ok'], $payload['tool'], $payload['data'], $payload['error']);
+
     echo json_encode(
-        $payload,
+        array_merge($envelope, $payload),
         JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
     );
     exit;
+}
+
+function ok(string $tool, array $data): never
+{
+    out(array_merge([
+        'ok' => true,
+        'tool' => $tool,
+        'data' => $data,
+        'error' => null,
+    ], $data));
+}
+
+function fail(string $message, int $status = 400, ?string $tool = null): never
+{
+    if ($status === 405 && !headers_sent()) {
+        header('Allow: POST');
+    }
+
+    out([
+        'ok' => false,
+        'tool' => $tool,
+        'data' => null,
+        'error' => $message,
+    ], $status);
+}
+
+function request_tool(): string
+{
+    return strtolower(trim((string) ($_GET['tool'] ?? '')));
+}
+
+function request_method(): string
+{
+    return strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+}
+
+function require_post(string $tool): void
+{
+    if (request_method() === 'POST') {
+        return;
+    }
+
+    fail(
+        'This endpoint requires POST. Do not send secrets or plaintext in query strings.',
+        405,
+        $tool
+    );
+}
+
+function assert_size(string $value, string $name = 'input'): void
+{
+    if (strlen($value) > APP_MAX_INPUT_BYTES) {
+        fail($name . ' exceeds the maximum size of ' . APP_MAX_INPUT_BYTES . ' bytes', 413);
+    }
+}
+
+function body_params(): array
+{
+    $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($contentLength > APP_MAX_INPUT_BYTES + 4096) {
+        fail('Request body is too large', 413);
+    }
+
+    $contentType = strtolower((string) ($_SERVER['CONTENT_TYPE'] ?? ''));
+
+    if (str_contains($contentType, 'application/json')) {
+        $raw = (string) file_get_contents('php://input');
+        if (strlen($raw) > APP_MAX_INPUT_BYTES + 4096) {
+            fail('Request body is too large', 413);
+        }
+        if ($raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            fail('Invalid JSON body', 400);
+        }
+
+        return $decoded;
+    }
+
+    return $_POST;
 }
 
 function request_params(): array
@@ -25,19 +121,17 @@ function request_params(): array
         return $params;
     }
 
+    $tool = request_tool();
+
+    if (in_array($tool, APP_SENSITIVE_TOOLS, true)) {
+        $params = array_merge(body_params(), ['tool' => $tool]);
+        return $params;
+    }
+
     $params = $_GET;
 
-    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
-        $contentType = strtolower((string) ($_SERVER['CONTENT_TYPE'] ?? ''));
-
-        if (str_contains($contentType, 'application/json')) {
-            $decoded = json_decode((string) file_get_contents('php://input'), true);
-            if (is_array($decoded)) {
-                $params = array_merge($params, $decoded);
-            }
-        } else {
-            $params = array_merge($params, $_POST);
-        }
+    if (request_method() === 'POST') {
+        $params = array_merge($params, body_params());
     }
 
     return $params;
@@ -60,10 +154,13 @@ function requireInput(): string
     $params = request_params();
 
     if (!isset($params['str']) && !isset($params['string']) && !isset($params['input'])) {
-        out(['ok' => false, 'error' => 'Missing parameter: str'], 400);
+        fail('Missing parameter: str', 400, request_tool() ?: null);
     }
 
-    return inputValue();
+    $value = inputValue();
+    assert_size($value, 'str');
+
+    return $value;
 }
 
 function boolParam(string $key, bool $default = true): bool
@@ -84,7 +181,7 @@ function boolParam(string $key, bool $default = true): bool
         return false;
     }
 
-    out(['ok' => false, 'error' => "Parameter {$key} must be a boolean"], 400);
+    fail("Parameter {$key} must be a boolean", 400, request_tool() ?: null);
 }
 
 function classifyIp(string $ip): ?string
@@ -202,14 +299,13 @@ function generatePassword(
     }
 
     if ($sets === []) {
-        out(['ok' => false, 'error' => 'Select at least one character set'], 400);
+        fail('Select at least one character set', 400, 'password');
     }
 
     $alphabet = implode('', $sets);
     $alphabetLength = strlen($alphabet);
     $password = '';
 
-    // Guarantee at least one character from each selected set when length allows.
     if ($length >= count($sets)) {
         foreach ($sets as $set) {
             $password .= $set[random_int(0, strlen($set) - 1)];
@@ -229,18 +325,170 @@ function generatePassword(
     return implode('', array_slice($chars, 0, $length));
 }
 
-$tool = strtolower(param('tool'));
+function b64_decode_strict(string $value): string|false
+{
+    $clean = preg_replace('/\s+/', '', $value) ?? '';
+
+    return base64_decode($clean, true);
+}
+
+function derive_aes_key(string $secret, string $salt, int $iterations): string
+{
+    $max = app_security()['max_encryption_iterations'];
+
+    if ($iterations < APP_PBKDF2_ITER_MIN || $iterations > $max) {
+        fail('Unsupported key-derivation parameters', 400, 'encryption');
+    }
+
+    return hash_pbkdf2('sha256', $secret, $salt, $iterations, 32, true);
+}
+
+function encryption_aad(int $version, string $alg, string $kdf, int $iterations, string $saltB64, string $ivB64): string
+{
+    return implode('|', [
+        (string) $version,
+        strtoupper($alg),
+        strtoupper($kdf),
+        (string) $iterations,
+        $saltB64,
+        $ivB64,
+    ]);
+}
+
+function encrypt_payload(string $plaintext, string $secret, int $iterations): array
+{
+    $salt = random_bytes(APP_ENC_SALT_BYTES);
+    $iv = random_bytes(APP_ENC_IV_BYTES);
+    $derived = derive_aes_key($secret, $salt, $iterations);
+    $saltB64 = base64_encode($salt);
+    $ivB64 = base64_encode($iv);
+    $aad = encryption_aad(APP_ENC_VERSION, 'AES-256-GCM', 'PBKDF2-SHA256', $iterations, $saltB64, $ivB64);
+    $tag = '';
+    $cipher = openssl_encrypt($plaintext, 'aes-256-gcm', $derived, OPENSSL_RAW_DATA, $iv, $tag, $aad);
+
+    if ($cipher === false || strlen($tag) !== APP_ENC_TAG_BYTES) {
+        fail('Encryption failed', 500, 'encryption');
+    }
+
+    return [
+        'v' => APP_ENC_VERSION,
+        'alg' => 'AES-256-GCM',
+        'kdf' => 'PBKDF2-SHA256',
+        'iter' => $iterations,
+        'salt' => $saltB64,
+        'iv' => $ivB64,
+        'ct' => base64_encode($cipher),
+        'tag' => base64_encode($tag),
+    ];
+}
+
+function decrypt_payload(string $input, string $secret): string
+{
+    $trimmed = trim($input);
+    $decodedJson = json_decode($trimmed, true);
+
+    if (is_array($decodedJson)) {
+        return decrypt_versioned($decodedJson, $secret);
+    }
+
+    return decrypt_legacy($trimmed, $secret);
+}
+
+function decrypt_versioned(array $payload, string $secret): string
+{
+    $version = filter_var($payload['v'] ?? null, FILTER_VALIDATE_INT);
+    $alg = strtoupper((string) ($payload['alg'] ?? ''));
+    $kdf = strtoupper((string) ($payload['kdf'] ?? ''));
+
+    if (
+        !in_array($version, [APP_ENC_VERSION_V1, APP_ENC_VERSION], true)
+        || $alg !== 'AES-256-GCM'
+        || $kdf !== 'PBKDF2-SHA256'
+    ) {
+        fail('Unsupported encrypted payload', 400, 'encryption');
+    }
+
+    $iterations = filter_var($payload['iter'] ?? null, FILTER_VALIDATE_INT);
+    $saltB64 = isset($payload['salt']) ? trim((string) $payload['salt']) : '';
+    $ivB64 = isset($payload['iv']) ? trim((string) $payload['iv']) : '';
+    $salt = $saltB64 !== '' ? b64_decode_strict($saltB64) : false;
+    $iv = $ivB64 !== '' ? b64_decode_strict($ivB64) : false;
+    $ct = isset($payload['ct']) ? b64_decode_strict((string) $payload['ct']) : false;
+    $tag = isset($payload['tag']) ? b64_decode_strict((string) $payload['tag']) : false;
+
+    if (
+        $iterations === false
+        || $salt === false
+        || $iv === false
+        || $ct === false
+        || $tag === false
+        || strlen($salt) < 16
+        || strlen($iv) !== APP_ENC_IV_BYTES
+        || strlen($tag) !== APP_ENC_TAG_BYTES
+    ) {
+        fail('Invalid encrypted payload', 400, 'encryption');
+    }
+
+    $derived = derive_aes_key($secret, $salt, $iterations);
+    $aad = $version === APP_ENC_VERSION
+        ? encryption_aad($version, $alg, $kdf, $iterations, $saltB64, $ivB64)
+        : '';
+
+    try {
+        $plain = openssl_decrypt($ct, 'aes-256-gcm', $derived, OPENSSL_RAW_DATA, $iv, $tag, $aad);
+    } catch (Throwable) {
+        $plain = false;
+    }
+
+    if ($plain === false) {
+        fail('Decryption failed. Check the secret key and encrypted value.', 400, 'encryption');
+    }
+
+    return $plain;
+}
+
+function decrypt_legacy(string $input, string $secret): string
+{
+    $raw = b64_decode_strict($input);
+    if ($raw === false || strlen($raw) < 44) {
+        fail('Invalid encrypted payload', 400, 'encryption');
+    }
+
+    $salt = substr($raw, 0, 16);
+    $iv = substr($raw, 16, 12);
+    $tag = substr($raw, 28, 16);
+    $cipher = substr($raw, 44);
+    $derived = derive_aes_key($secret, $salt, APP_LEGACY_PBKDF2_ITERATIONS);
+
+    try {
+        $plain = openssl_decrypt($cipher, 'aes-256-gcm', $derived, OPENSSL_RAW_DATA, $iv, $tag);
+    } catch (Throwable) {
+        $plain = false;
+    }
+
+    if ($plain === false) {
+        fail('Decryption failed. Check the secret key and encrypted value.', 400, 'encryption');
+    }
+
+    return $plain;
+}
+
+$tool = request_tool();
+
+if (in_array($tool, APP_SENSITIVE_TOOLS, true)) {
+    require_post($tool);
+}
 
 if ($tool === 'password') {
     $length = filter_var(param('length', '24'), FILTER_VALIDATE_INT);
     $count = filter_var(param('count', '1'), FILTER_VALIDATE_INT);
 
     if ($length === false || $length < 8 || $length > 128) {
-        out(['ok' => false, 'error' => 'length must be an integer from 8 to 128'], 400);
+        fail('length must be an integer from 8 to 128', 400, 'password');
     }
 
     if ($count === false || $count < 1 || $count > 20) {
-        out(['ok' => false, 'error' => 'count must be an integer from 1 to 20'], 400);
+        fail('count must be an integer from 1 to 20', 400, 'password');
     }
 
     $upper = boolParam('upper', true);
@@ -253,9 +501,7 @@ if ($tool === 'password') {
         $passwords[] = generatePassword($length, $upper, $lower, $numbers, $symbols);
     }
 
-    out([
-        'ok' => true,
-        'tool' => 'password',
+    ok('password', [
         'length' => $length,
         'count' => $count,
         'upper' => $upper,
@@ -272,19 +518,22 @@ if ($tool === 'hash') {
     $alg = strtolower(param('algorithm', 'sha256'));
 
     if ($alg === 'bcrypt') {
-        $cost = filter_var(param('cost', '12'), FILTER_VALIDATE_INT);
-        if ($cost === false || $cost < 4 || $cost > 31) {
-            out(['ok' => false, 'error' => 'bcrypt cost must be an integer from 4 to 31'], 400);
+        $security = app_security();
+        $cost = filter_var(param('cost', (string) $security['bcrypt_cost']), FILTER_VALIDATE_INT);
+        if ($cost === false || $cost < APP_BCRYPT_COST_MIN || $cost > $security['max_bcrypt_cost']) {
+            fail(
+                'bcrypt cost must be an integer from ' . APP_BCRYPT_COST_MIN . ' to ' . $security['max_bcrypt_cost'],
+                400,
+                'hash'
+            );
         }
 
         $hash = password_hash($str, PASSWORD_BCRYPT, ['cost' => $cost]);
         if ($hash === false) {
-            out(['ok' => false, 'error' => 'Unable to generate bcrypt hash'], 500);
+            fail('Unable to generate bcrypt hash', 500, 'hash');
         }
 
-        out([
-            'ok' => true,
-            'tool' => 'hash',
+        ok('hash', [
             'algorithm' => 'bcrypt',
             'cost' => $cost,
             'salt' => substr($hash, 7, 22),
@@ -300,9 +549,7 @@ if ($tool === 'hash') {
             $result[$algorithm] = hash($algorithm, $str);
         }
 
-        out([
-            'ok' => true,
-            'tool' => 'hash',
+        ok('hash', [
             'algorithm' => 'all',
             'input_length' => strlen($str),
             'hashes' => $result,
@@ -310,12 +557,10 @@ if ($tool === 'hash') {
     }
 
     if (!in_array($alg, $allowed, true)) {
-        out(['ok' => false, 'error' => 'Unsupported algorithm'], 400);
+        fail('Unsupported algorithm', 400, 'hash');
     }
 
-    out([
-        'ok' => true,
-        'tool' => 'hash',
+    ok('hash', [
         'algorithm' => $alg,
         'input_length' => strlen($str),
         'hash' => hash($alg, $str),
@@ -327,9 +572,7 @@ if ($tool === 'timestamp') {
 
     if ($raw === '') {
         $now = microtime(true);
-        out([
-            'ok' => true,
-            'tool' => 'timestamp',
+        ok('timestamp', [
             'current' => true,
             'timezone' => 'UTC',
             'unix_seconds' => (int) floor($now),
@@ -340,21 +583,19 @@ if ($tool === 'timestamp') {
     }
 
     if (!is_numeric($raw)) {
-        out(['ok' => false, 'error' => 'timestamp must be numeric'], 400);
+        fail('timestamp must be numeric', 400, 'timestamp');
     }
 
     $unit = strtolower(param('unit', 's'));
     if (!in_array($unit, ['s', 'ms'], true)) {
-        out(['ok' => false, 'error' => 'unit must be s or ms'], 400);
+        fail('unit must be s or ms', 400, 'timestamp');
     }
 
     $sec = $unit === 'ms' ? (float) $raw / 1000 : (float) $raw;
     $whole = (int) floor($sec);
     $fraction = max(0.0, $sec - $whole);
 
-    out([
-        'ok' => true,
-        'tool' => 'timestamp',
+    ok('timestamp', [
         'input' => $raw,
         'unit' => $unit,
         'unix_seconds' => $sec,
@@ -367,7 +608,7 @@ if ($tool === 'timestamp') {
 if ($tool === 'uuid') {
     $count = filter_var(param('count', '1'), FILTER_VALIDATE_INT);
     if ($count === false || $count < 1 || $count > 100) {
-        out(['ok' => false, 'error' => 'count must be an integer from 1 to 100'], 400);
+        fail('count must be an integer from 1 to 100', 400, 'uuid');
     }
 
     $uuids = [];
@@ -375,9 +616,7 @@ if ($tool === 'uuid') {
         $uuids[] = generateUuidV4();
     }
 
-    out([
-        'ok' => true,
-        'tool' => 'uuid',
+    ok('uuid', [
         'version' => 4,
         'count' => $count,
         'uuid' => $uuids[0],
@@ -391,15 +630,15 @@ if ($tool === 'secret') {
     $format = strtolower(param('format', 'hex'));
 
     if ($length === false || $length < 16 || $length > 256) {
-        out(['ok' => false, 'error' => 'length must be an integer from 16 to 256'], 400);
+        fail('length must be an integer from 16 to 256', 400, 'secret');
     }
 
     if ($count === false || $count < 1 || $count > 20) {
-        out(['ok' => false, 'error' => 'count must be an integer from 1 to 20'], 400);
+        fail('count must be an integer from 1 to 20', 400, 'secret');
     }
 
     if (!in_array($format, ['hex', 'base64', 'base64url'], true)) {
-        out(['ok' => false, 'error' => 'format must be hex, base64, or base64url'], 400);
+        fail('format must be hex, base64, or base64url', 400, 'secret');
     }
 
     $secrets = [];
@@ -407,9 +646,7 @@ if ($tool === 'secret') {
         $secrets[] = generateSecret($length, $format);
     }
 
-    out([
-        'ok' => true,
-        'tool' => 'secret',
+    ok('secret', [
         'length' => $length,
         'format' => $format,
         'count' => $count,
@@ -425,24 +662,20 @@ if ($tool === 'base64') {
     if ($mode === 'decode') {
         $decoded = base64_decode($str, true);
         if ($decoded === false) {
-            out(['ok' => false, 'error' => 'Invalid Base64'], 400);
+            fail('Invalid Base64', 400, 'base64');
         }
 
-        out([
-            'ok' => true,
-            'tool' => 'base64',
+        ok('base64', [
             'mode' => 'decode',
             'output' => $decoded,
         ]);
     }
 
     if ($mode !== 'encode') {
-        out(['ok' => false, 'error' => 'mode must be encode or decode'], 400);
+        fail('mode must be encode or decode', 400, 'base64');
     }
 
-    out([
-        'ok' => true,
-        'tool' => 'base64',
+    ok('base64', [
         'mode' => 'encode',
         'output' => base64_encode($str),
     ]);
@@ -450,104 +683,107 @@ if ($tool === 'base64') {
 
 if ($tool === 'user-agent') {
     $ua = param('ua', param('user_agent', $_SERVER['HTTP_USER_AGENT'] ?? ''));
+    assert_size($ua, 'ua');
 
     if ($ua === '') {
-        out(['ok' => false, 'error' => 'Missing User-Agent. Pass ua=... or call from a browser.'], 400);
+        fail('Missing User-Agent. Pass ua=... or call from a browser.', 400, 'user-agent');
     }
 
-    out([
-        'ok' => true,
-        'tool' => 'user-agent',
-        ...parseUserAgent($ua),
-    ]);
+    ok('user-agent', parseUserAgent($ua));
 }
 
 if ($tool === 'ip') {
     $remote = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
     $family = $remote !== '' ? classifyIp($remote) : null;
-
     $ipv4 = $family === 'ipv4' ? $remote : null;
     $ipv6 = $family === 'ipv6' ? $remote : null;
+    $xRealIp = trim((string) ($_SERVER['HTTP_X_REAL_IP'] ?? ''));
+    $xForwardedFor = trim((string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''));
 
-    out([
-        'ok' => true,
-        'tool' => 'ip',
-        'ip' => $remote,
+    ok('ip', [
+        'ip' => $remote !== '' ? $remote : null,
         'version' => $family === 'ipv4' ? 4 : ($family === 'ipv6' ? 6 : null),
         'ipv4' => $ipv4,
         'ipv6' => $ipv6,
-        'remote_addr' => $remote,
-        'x_real_ip' => (string) ($_SERVER['HTTP_X_REAL_IP'] ?? ''),
-        'x_forwarded_for' => (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''),
-        'note' => 'ipv4/ipv6 reflect the server-observed REMOTE_ADDR for this connection. Proxy headers are exposed separately and are not trusted automatically.',
+        'ipv4_status' => $ipv4 !== null ? 'detected' : 'not_detected',
+        'ipv6_status' => $ipv6 !== null ? 'detected' : 'not_detected',
+        'remote_addr' => $remote !== '' ? $remote : null,
+        'proxy_headers' => [
+            'trusted' => false,
+            'x_real_ip' => $xRealIp !== '' ? $xRealIp : null,
+            'x_forwarded_for' => $xForwardedFor !== '' ? $xForwardedFor : null,
+        ],
+        'x_real_ip' => $xRealIp,
+        'x_forwarded_for' => $xForwardedFor,
+        'note' => 'ipv4/ipv6 reflect REMOTE_ADDR for this TCP connection only. A connection is one address family, so the other family is not detected here. X-Forwarded-For and X-Real-IP are listed for inspection and are not trusted.',
     ]);
 }
 
 if ($tool === 'encryption') {
+    if (!function_exists('openssl_encrypt')) {
+        fail('OpenSSL is not available on this server', 500, 'encryption');
+    }
+
     $str = inputValue();
-    $key = param('key', 'change-this-demo-secret');
+    $key = param('key');
     $mode = strtolower(param('mode', 'encrypt'));
 
+    assert_size($str, 'str');
+    assert_size($key, 'key');
+
     if ($key === '') {
-        out(['ok' => false, 'error' => 'Missing parameter: key'], 400);
+        fail('Missing parameter: key', 400, 'encryption');
     }
-
-    if (!function_exists('openssl_encrypt')) {
-        out(['ok' => false, 'error' => 'OpenSSL is not available on this server'], 500);
-    }
-
-    $method = 'aes-256-gcm';
-    $salt = random_bytes(16);
-    $iv = random_bytes(12);
-    $derived = hash_pbkdf2('sha256', $key, $salt, 120000, 32, true);
 
     if ($mode === 'encrypt') {
-        $tag = '';
-        $cipher = openssl_encrypt($str, $method, $derived, OPENSSL_RAW_DATA, $iv, $tag);
-        if ($cipher === false) {
-            out(['ok' => false, 'error' => 'Encryption failed'], 500);
+        $security = app_security();
+        $iterations = $security['encryption_iterations'];
+        $requested = param('iter', param('iterations'));
+
+        if ($requested !== '') {
+            $parsed = filter_var($requested, FILTER_VALIDATE_INT);
+            if (
+                $parsed === false
+                || $parsed < APP_PBKDF2_ITER_MIN
+                || $parsed > $security['max_encryption_iterations']
+            ) {
+                fail(
+                    'iter must be an integer from ' . APP_PBKDF2_ITER_MIN . ' to ' . $security['max_encryption_iterations'],
+                    400,
+                    'encryption'
+                );
+            }
+            $iterations = $parsed;
         }
 
-        out([
-            'ok' => true,
-            'tool' => 'encryption',
+        $payload = encrypt_payload($str, $key, $iterations);
+        $output = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+        ok('encryption', [
             'mode' => 'encrypt',
             'algorithm' => 'AES-256-GCM',
-            'output' => base64_encode($salt . $iv . $tag . $cipher),
+            'kdf' => 'PBKDF2-HMAC-SHA-256',
+            'iterations' => $iterations,
+            'payload' => $payload,
+            'output' => $output,
         ]);
     }
 
     if ($mode === 'decrypt') {
         if ($str === '') {
-            out(['ok' => false, 'error' => 'Missing parameter: str'], 400);
+            fail('Missing parameter: str', 400, 'encryption');
         }
 
-        $raw = base64_decode($str, true);
-        if ($raw === false || strlen($raw) < 44) {
-            out(['ok' => false, 'error' => 'Invalid encrypted payload'], 400);
-        }
+        $plain = decrypt_payload($str, $key);
 
-        $salt = substr($raw, 0, 16);
-        $iv = substr($raw, 16, 12);
-        $tag = substr($raw, 28, 16);
-        $cipher = substr($raw, 44);
-        $derived = hash_pbkdf2('sha256', $key, $salt, 120000, 32, true);
-        $plain = openssl_decrypt($cipher, $method, $derived, OPENSSL_RAW_DATA, $iv, $tag);
-
-        if ($plain === false) {
-            out(['ok' => false, 'error' => 'Decryption failed. Check the secret key and encrypted value.'], 400);
-        }
-
-        out([
-            'ok' => true,
-            'tool' => 'encryption',
+        ok('encryption', [
             'mode' => 'decrypt',
             'algorithm' => 'AES-256-GCM',
             'output' => $plain,
         ]);
     }
 
-    out(['ok' => false, 'error' => 'mode must be encrypt or decrypt'], 400);
+    fail('mode must be encrypt or decrypt', 400, 'encryption');
 }
 
-out(['ok' => false, 'error' => 'Unknown tool.'], 404);
+fail('Unknown tool.', 404);

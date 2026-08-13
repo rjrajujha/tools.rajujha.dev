@@ -8,6 +8,7 @@
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.11",
+    "qrcode-generator": "^2.0.4",
     "tailwindcss": "^4.1.11"
   }
 }

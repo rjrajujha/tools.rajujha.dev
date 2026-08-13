@@ -4,6 +4,29 @@
   const toastEl = $('#toast');
   let toastTimer = 0;
 
+  const LEGACY_PBKDF2_ITERATIONS = 120000;
+  const PBKDF2_ITER_MIN = 100000;
+
+  function appConfig() {
+    const raw = document.getElementById('app-config')?.textContent;
+    if (!raw) throw Error('Missing application config.');
+    const parsed = JSON.parse(raw);
+    const bcryptCost = Number(parsed.bcryptCost);
+    const maxBcryptCost = Number(parsed.maxBcryptCost);
+    const encryptionIterations = Number(parsed.encryptionIterations);
+    const maxEncryptionIterations = Number(parsed.maxEncryptionIterations);
+    if (
+      ![bcryptCost, maxBcryptCost, encryptionIterations, maxEncryptionIterations].every(Number.isFinite) ||
+      bcryptCost < 4 ||
+      maxBcryptCost < bcryptCost ||
+      encryptionIterations < PBKDF2_ITER_MIN ||
+      maxEncryptionIterations < encryptionIterations
+    ) {
+      throw Error('Invalid application config.');
+    }
+    return { bcryptCost, maxBcryptCost, encryptionIterations, maxEncryptionIterations };
+  }
+
   function showToast(message) {
     if (!toastEl) return;
     toastEl.textContent = message;
@@ -51,9 +74,19 @@
     const original = button.dataset.label || button.textContent;
     button.dataset.label = original;
     button.textContent = 'Copied';
+    button.classList.add('border-leaf/50', 'bg-moss', 'text-ink');
     window.setTimeout(() => {
       button.textContent = original;
+      button.classList.remove('border-leaf/50', 'bg-moss', 'text-ink');
     }, 900);
+  }
+
+  function setResult(el, value) {
+    if (!el) return;
+    el.textContent = value;
+    el.classList.remove('result-flash');
+    void el.offsetWidth;
+    el.classList.add('result-flash');
   }
 
   function bindSubmit(run, selectors = ['#input', '#pattern', '#flags', '#key', '#unit', '#algorithm', '#cost', '#secretFormat', '#mode']) {
@@ -155,14 +188,18 @@
     }
   }
 
-  async function deriveAesKey(secret, salt) {
+  async function deriveAesKey(secret, salt, iterations = appConfig().encryptionIterations) {
+    if (iterations < PBKDF2_ITER_MIN || iterations > appConfig().maxEncryptionIterations) {
+      throw Error('Unsupported key-derivation parameters.');
+    }
+
     const subtle = getSubtle();
     const material = await subtle.importKey('raw', utf8Encode(secret), { name: 'PBKDF2' }, false, [
       'deriveKey',
     ]);
 
     return subtle.deriveKey(
-      { name: 'PBKDF2', salt, iterations: 120000, hash: 'SHA-256' },
+      { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
       material,
       { name: 'AES-GCM', length: 256 },
       false,
@@ -345,8 +382,16 @@
 
       try {
         if (names[algorithm] && canDigest()) {
-          $('#output').textContent = await digest(value, names[algorithm]);
+          setResult($('#output'), await digest(value, names[algorithm]));
           return;
+        }
+
+        if (algorithm === 'bcrypt') {
+          const cost = Number($('#cost').value);
+          const maxCost = appConfig().maxBcryptCost;
+          if (!Number.isInteger(cost) || cost < 4 || cost > maxCost) {
+            throw Error(`bcrypt cost must be an integer from 4 to ${maxCost}`);
+          }
         }
 
         const data = await api(
@@ -358,10 +403,14 @@
           },
           'POST'
         );
-        $('#output').textContent =
-          algorithm === 'all' ? JSON.stringify(data, null, 2) : data.hash || JSON.stringify(data, null, 2);
+        setResult(
+          $('#output'),
+          algorithm === 'all'
+            ? JSON.stringify(data.hashes || data.data?.hashes || data, null, 2)
+            : data.hash || data.data?.hash || JSON.stringify(data, null, 2)
+        );
       } catch (error) {
-        $('#output').textContent = error.message;
+        setResult($('#output'), error.message);
       } finally {
         setBusy(button, false);
       }
@@ -386,17 +435,17 @@
       const value = Number($('#input').value);
       const seconds = $('#unit').value === 'ms' ? value / 1000 : value;
       if (!Number.isFinite(seconds)) {
-        $('#output').textContent = 'Enter a valid timestamp';
+        setResult($('#output'), 'Enter a valid timestamp');
         return;
       }
 
       const date = new Date(seconds * 1000);
       if (Number.isNaN(date.getTime())) {
-        $('#output').textContent = 'Timestamp is outside the supported date range';
+        setResult($('#output'), 'Timestamp is outside the supported date range');
         return;
       }
 
-      $('#output').textContent = JSON.stringify(
+      setResult($('#output'), JSON.stringify(
         {
           unix_seconds: seconds,
           unix_milliseconds: Math.round(seconds * 1000),
@@ -406,7 +455,7 @@
         },
         null,
         2
-      );
+      ));
     };
 
     $('#run').onclick = run;
@@ -417,9 +466,9 @@
   function initJson() {
     const format = () => {
       try {
-        $('#output').textContent = JSON.stringify(JSON.parse($('#input').value), null, 2);
+        setResult($('#output'), JSON.stringify(JSON.parse($('#input').value), null, 2));
       } catch (error) {
-        $('#output').textContent = 'Invalid JSON: ' + error.message;
+        setResult($('#output'), 'Invalid JSON: ' + error.message);
       }
     };
 
@@ -427,9 +476,9 @@
     bindSubmit(format);
     $('#minify').onclick = () => {
       try {
-        $('#output').textContent = JSON.stringify(JSON.parse($('#input').value));
+        setResult($('#output'), JSON.stringify(JSON.parse($('#input').value)));
       } catch (error) {
-        $('#output').textContent = 'Invalid JSON: ' + error.message;
+        setResult($('#output'), 'Invalid JSON: ' + error.message);
       }
     };
     $('#copy').onclick = () => copyText($('#output').textContent);
@@ -445,37 +494,125 @@
     run();
   }
 
+  function qrToCanvas(qr, cellSize = 8, margin = 4) {
+    const count = qr.getModuleCount();
+    const size = (count + margin * 2) * cellSize;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    canvas.className = 'h-auto max-w-[min(100%,280px)] rounded-xl bg-white';
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', 'Generated QR code');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = '#000000';
+    for (let row = 0; row < count; row += 1) {
+      for (let col = 0; col < count; col += 1) {
+        if (qr.isDark(row, col)) {
+          ctx.fillRect((col + margin) * cellSize, (row + margin) * cellSize, cellSize, cellSize);
+        }
+      }
+    }
+    return canvas;
+  }
+
+  function qrToSvg(qr, cellSize = 8, margin = 4) {
+    const count = qr.getModuleCount();
+    const size = (count + margin * 2) * cellSize;
+    const rects = [];
+    for (let row = 0; row < count; row += 1) {
+      for (let col = 0; col < count; col += 1) {
+        if (qr.isDark(row, col)) {
+          rects.push(
+            `<rect x="${(col + margin) * cellSize}" y="${(row + margin) * cellSize}" width="${cellSize}" height="${cellSize}"/>`
+          );
+        }
+      }
+    }
+    return `<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#ffffff"/>${rects.join('')}</svg>`;
+  }
+
   function initQr() {
+    const frame = $('#qr');
+    const pngButton = $('#qrDownloadPng');
+    const svgButton = $('#qrDownloadSvg');
+    let pngUrl = '';
+    let svgText = '';
+
+    const reset = (message) => {
+      pngUrl = '';
+      svgText = '';
+      if (pngButton) pngButton.disabled = true;
+      if (svgButton) svgButton.disabled = true;
+      frame.replaceChildren();
+      frame.textContent = message;
+    };
+
+    const download = (href, name) => {
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = name;
+      link.rel = 'noopener';
+      link.click();
+    };
+
     const run = () => {
-      const value = $('#input').value.trim();
-      const frame = $('#qr');
-      if (!value) {
-        frame.textContent = 'Enter text or a URL';
+      const value = $('#input').value;
+      if (!value.trim()) {
+        reset('Enter text or a URL');
+        return;
+      }
+      if (typeof qrcode !== 'function') {
+        reset('QR library failed to load. Refresh the page.');
         return;
       }
 
-      frame.textContent = 'Generating…';
-      const image = document.createElement('img');
-      image.src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(value);
-      image.alt = 'QR code for the entered text';
-      image.width = 220;
-      image.height = 220;
-      image.className = 'h-auto max-w-[min(100%,220px)] rounded-xl';
-      image.onload = () => frame.replaceChildren(image);
-      image.onerror = () => {
-        frame.textContent = 'Could not generate a QR code. Try again.';
-      };
+      const level = $('#qrLevel')?.value || 'M';
+      try {
+        const qr = qrcode(0, level);
+        qr.addData(value);
+        qr.make();
+        const canvas = qrToCanvas(qr);
+        pngUrl = canvas.toDataURL('image/png');
+        svgText = qrToSvg(qr);
+        frame.replaceChildren(canvas);
+        if (pngButton) pngButton.disabled = false;
+        if (svgButton) svgButton.disabled = false;
+      } catch (error) {
+        reset(error.message || 'Could not generate a QR code for that input.');
+      }
     };
 
     $('#run').onclick = run;
-    bindSubmit(run);
+    bindSubmit(run, ['#input', '#qrLevel']);
+    pngButton?.addEventListener('click', () => {
+      if (pngUrl) download(pngUrl, 'qr.png');
+    });
+    svgButton?.addEventListener('click', () => {
+      if (!svgText) return;
+      const url = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml' }));
+      download(url, 'qr.svg');
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    });
   }
 
   function initRegex() {
     const run = () => {
       try {
-        const pattern = new RegExp($('#pattern').value, $('#flags').value);
+        const source = $('#pattern').value;
+        const flags = $('#flags').value;
+        if (source.length > 256) {
+          throw Error('Pattern is limited to 256 characters.');
+        }
+        if (!/^[gimsuy]*$/.test(flags)) {
+          throw Error('Flags may only include g, i, m, s, u, and y.');
+        }
         const value = $('#input').value;
+        if (value.length > 100000) {
+          throw Error('Test string is limited to 100,000 characters.');
+        }
+        const pattern = new RegExp(source, flags);
         const matches = pattern.global
           ? [...value.matchAll(pattern)].map((match) => ({ match: match[0], index: match.index }))
           : (() => {
@@ -483,13 +620,12 @@
               return match ? [{ match: match[0], index: match.index }] : [];
             })();
 
-        $('#output').textContent = JSON.stringify(
-          { valid: true, matched: matches.length > 0, matches },
-          null,
-          2
+        setResult(
+          $('#output'),
+          JSON.stringify({ valid: true, matched: matches.length > 0, matches }, null, 2)
         );
       } catch (error) {
-        $('#output').textContent = 'Invalid regex: ' + error.message;
+        setResult($('#output'), 'Invalid regex: ' + error.message);
       }
     };
 
@@ -503,9 +639,9 @@
 
     const encode = () => {
       try {
-        output.textContent = b64(utf8Encode(input.value));
+        setResult(output, b64(utf8Encode(input.value)));
       } catch (error) {
-        output.textContent = error.message;
+        setResult(output, error.message);
       }
     };
 
@@ -513,9 +649,9 @@
     bindSubmit(encode);
     $('#decode').onclick = () => {
       try {
-        output.textContent = utf8Decode(unb64(input.value.trim()));
+        setResult(output, utf8Decode(unb64(input.value.trim())));
       } catch {
-        output.textContent = 'Invalid Base64';
+        setResult(output, 'Invalid Base64');
       }
     };
     $('#copy').onclick = () => copyText(output.textContent);
@@ -583,17 +719,25 @@
 
     const run = () => {
       const data = parseUA(input.value.trim() || navigator.userAgent);
-      $('#uaCards').innerHTML = [
+      const cards = $('#uaCards');
+      cards.replaceChildren();
+      for (const [label, value] of [
         ['Browser', `${data.browser}${data.version ? ' ' + data.version : ''}`],
         ['Operating system', data.os],
         ['Device', data.device],
         ['Mobile', data.mobile ? 'Yes' : 'No'],
-      ]
-        .map(([label, value]) => {
-          const safe = String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          return `<div class="rounded-2xl border border-line bg-soft px-4 py-4 text-left"><span class="mb-1 block text-xs font-bold uppercase tracking-wide text-muted">${label}</span><strong class="block break-words text-base leading-snug tracking-tight text-ink sm:text-lg">${safe}</strong></div>`;
-        })
-        .join('');
+      ]) {
+        const card = document.createElement('div');
+        card.className = 'rounded-2xl border border-line bg-soft px-4 py-4 text-left';
+        const caption = document.createElement('span');
+        caption.className = 'mb-1 block text-xs font-bold uppercase tracking-wide text-muted';
+        caption.textContent = label;
+        const strong = document.createElement('strong');
+        strong.className = 'block break-words text-base leading-snug tracking-tight text-ink sm:text-lg';
+        strong.textContent = String(value);
+        card.append(caption, strong);
+        cards.append(card);
+      }
       $('#uaOutput').textContent = JSON.stringify(data, null, 2);
     };
 
@@ -604,20 +748,49 @@
   }
 
   function mdEscape(value) {
-    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
-  function inline(value) {
+  function sanitizeHttpUrl(raw) {
+    if (typeof raw !== 'string' || /[\s<>"'`\\]/.test(raw)) return '';
+    try {
+      const url = new URL(raw);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+      return url.href;
+    } catch {
+      return '';
+    }
+  }
+
+  function formatMarks(value) {
     return mdEscape(value)
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/__([^_]+)__/g, '<strong>$1</strong>')
       .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-      .replace(/(^|[\s(])_([^_\s][^_]*)_(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>')
-      .replace(
-        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
-      );
+      .replace(/(^|[\s(])_([^_\s][^_]*)_(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');
+  }
+
+  function inline(value) {
+    const link = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+    let html = '';
+    let last = 0;
+    let match = link.exec(value);
+    while (match) {
+      html += formatMarks(value.slice(last, match.index));
+      const href = sanitizeHttpUrl(match[2]);
+      html += href
+        ? `<a href="${mdEscape(href)}" target="_blank" rel="noopener noreferrer">${mdEscape(match[1])}</a>`
+        : formatMarks(match[0]);
+      last = match.index + match[0].length;
+      match = link.exec(value);
+    }
+    return html + formatMarks(value.slice(last));
   }
 
   function markdown(source) {
@@ -691,7 +864,45 @@
 
     const render = () => {
       const value = input.value;
-      preview.innerHTML = markdown(value);
+      const allowed = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'STRONG', 'EM', 'CODE', 'PRE', 'UL', 'LI', 'BLOCKQUOTE', 'A', 'DIV']);
+      const parsed = new DOMParser().parseFromString(`<div id="md-root">${markdown(value)}</div>`, 'text/html');
+      const root = parsed.getElementById('md-root');
+      const copyNode = (node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          return document.createTextNode(node.nodeValue || '');
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+          return document.createTextNode('');
+        }
+        const tag = node.tagName;
+        if (!allowed.has(tag)) {
+          const fragment = document.createDocumentFragment();
+          for (const child of node.childNodes) fragment.append(copyNode(child));
+          return fragment;
+        }
+        const el = document.createElement(tag.toLowerCase());
+        if (tag === 'A') {
+          const href = sanitizeHttpUrl(node.getAttribute('href') || '');
+          if (!href) {
+            const fragment = document.createDocumentFragment();
+            for (const child of node.childNodes) fragment.append(copyNode(child));
+            return fragment;
+          }
+          el.setAttribute('href', href);
+          el.setAttribute('target', '_blank');
+          el.setAttribute('rel', 'noopener noreferrer');
+        }
+        if (tag === 'DIV') {
+          el.className = 'h-1.5';
+        }
+        for (const child of node.childNodes) el.append(copyNode(child));
+        return el;
+      };
+      const clean = document.createElement('div');
+      if (root) {
+        for (const child of root.childNodes) clean.append(copyNode(child));
+      }
+      preview.replaceChildren(...clean.childNodes);
       stats.textContent = `${value.length} characters · ${value.length ? value.split(/\n/).length : 0} lines`;
     };
 
@@ -726,10 +937,10 @@
         return;
       }
 
-      output.textContent = 'Unavailable';
+      output.textContent = 'Not detected on this connection';
       output.classList.remove('text-ink');
       output.classList.add('text-muted');
-      note.textContent = 'Not observed on this connection';
+      note.textContent = 'This connection did not expose that address family';
       card.classList.remove('border-[#dbe8ce]', 'bg-moss');
       card.classList.add('border-line', 'bg-soft');
     };
@@ -739,19 +950,19 @@
       setBusy(button, true, 'Checking…');
       try {
         const data = await api({ tool: 'ip' });
-        $('#ipOutput').textContent = data.ip || 'Unavailable';
+        $('#ipOutput').textContent = data.ip || 'Not detected on this connection';
         $('#ipVersion').textContent = data.version
-          ? `IPv${data.version} · server-observed REMOTE_ADDR`
-          : 'Server-observed REMOTE_ADDR';
+          ? `IPv${data.version} detected · server-observed REMOTE_ADDR`
+          : 'No valid REMOTE_ADDR on this connection';
         setFamily(4, data.ipv4);
         setFamily(6, data.ipv6);
-        $('#ipDetails').textContent = JSON.stringify(data, null, 2);
+        setResult($('#ipDetails'), JSON.stringify(data.data || data, null, 2));
       } catch (error) {
         $('#ipOutput').textContent = 'Error';
         $('#ipVersion').textContent = error.message;
         setFamily(4, null);
         setFamily(6, null);
-        $('#ipDetails').textContent = error.message;
+        setResult($('#ipDetails'), error.message);
       } finally {
         setBusy(button, false);
       }
@@ -787,16 +998,81 @@
     generate();
   }
 
+  function encodePayload(payload) {
+    return JSON.stringify(payload, null, 2);
+  }
+
+  function encryptionAad(version, alg, kdf, iterations, saltB64, ivB64) {
+    return utf8Encode(
+      [version, String(alg).toUpperCase(), String(kdf).toUpperCase(), String(iterations), saltB64, ivB64].join('|')
+    );
+  }
+
   async function encryptLocal(value, key) {
     const subtle = getSubtle();
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const derived = await deriveAesKey(key, salt);
-    const raw = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv }, derived, utf8Encode(value)));
-    return b64(concatBytes(salt, iv, raw.slice(-16), raw.slice(0, -16)));
+    const iterations = appConfig().encryptionIterations;
+    const saltB64 = b64(salt);
+    const ivB64 = b64(iv);
+    const derived = await deriveAesKey(key, salt, iterations);
+    const raw = new Uint8Array(
+      await subtle.encrypt(
+        {
+          name: 'AES-GCM',
+          iv,
+          additionalData: encryptionAad(2, 'AES-256-GCM', 'PBKDF2-SHA256', iterations, saltB64, ivB64),
+          tagLength: 128,
+        },
+        derived,
+        utf8Encode(value)
+      )
+    );
+    const tag = raw.slice(-16);
+    const ct = raw.slice(0, -16);
+
+    return encodePayload({
+      v: 2,
+      alg: 'AES-256-GCM',
+      kdf: 'PBKDF2-SHA256',
+      iter: iterations,
+      salt: saltB64,
+      iv: ivB64,
+      ct: b64(ct),
+      tag: b64(tag),
+    });
   }
 
-  async function decryptLocal(value, key) {
+  async function decryptVersioned(payload, key) {
+    const subtle = getSubtle();
+    const version = Number(payload.v);
+    const alg = String(payload.alg || '').toUpperCase();
+    const kdf = String(payload.kdf || '').toUpperCase();
+    if (![1, 2].includes(version) || alg !== 'AES-256-GCM' || kdf !== 'PBKDF2-SHA256') {
+      throw Error('Unsupported encrypted payload.');
+    }
+
+    const iterations = Number(payload.iter);
+    const saltB64 = String(payload.salt || '');
+    const ivB64 = String(payload.iv || '');
+    const salt = unb64(saltB64);
+    const iv = unb64(ivB64);
+    const ct = unb64(String(payload.ct || ''));
+    const tag = unb64(String(payload.tag || ''));
+    if (salt.length < 16 || iv.length !== 12 || tag.length !== 16) {
+      throw Error('Invalid encrypted payload.');
+    }
+
+    const derived = await deriveAesKey(key, salt, iterations);
+    const params = { name: 'AES-GCM', iv, tagLength: 128 };
+    if (version === 2) {
+      params.additionalData = encryptionAad(version, alg, kdf, iterations, saltB64, ivB64);
+    }
+    const plain = await subtle.decrypt(params, derived, concatBytes(ct, tag));
+    return utf8Decode(new Uint8Array(plain));
+  }
+
+  async function decryptLegacy(value, key) {
     const subtle = getSubtle();
     const raw = unb64(value.trim());
     if (raw.length < 44) throw Error('Invalid encrypted value.');
@@ -804,9 +1080,22 @@
     const iv = raw.slice(16, 28);
     const tag = raw.slice(28, 44);
     const cipher = raw.slice(44);
-    const derived = await deriveAesKey(key, salt);
+    const derived = await deriveAesKey(key, salt, LEGACY_PBKDF2_ITERATIONS);
     const plain = await subtle.decrypt({ name: 'AES-GCM', iv }, derived, concatBytes(cipher, tag));
     return utf8Decode(new Uint8Array(plain));
+  }
+
+  async function decryptLocal(value, key) {
+    const trimmed = value.trim();
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        return decryptVersioned(parsed, key);
+      }
+    } catch {
+      // Fall through to the previous binary payload format.
+    }
+    return decryptLegacy(trimmed, key);
   }
 
   function initEncryption() {
@@ -818,17 +1107,22 @@
         const key = $('#key').value;
         const value = $('#input').value;
         if (!key) throw Error('Secret key is required.');
-
-        if (canAesGcm()) {
-          $('#output').textContent =
-            mode === 'encrypt' ? await encryptLocal(value, key) : await decryptLocal(value, key);
-          return;
+        if (!canAesGcm()) {
+          throw Error(
+            'This page needs a modern browser and HTTPS (or localhost) so Web Crypto can run locally. Plaintext and the secret key are not sent to the server.'
+          );
         }
 
-        const data = await api({ tool: 'encryption', str: value, key, mode }, 'POST');
-        $('#output').textContent = data.output;
+        setResult(
+          $('#output'),
+          mode === 'encrypt' ? await encryptLocal(value, key) : await decryptLocal(value, key)
+        );
       } catch (error) {
-        $('#output').textContent = 'Encryption/decryption failed: ' + error.message;
+        const message = String(error.message || error);
+        const failed = /operation-specific|OperationError|decrypt/i.test(message)
+          ? 'Decryption failed. Check the secret key and encrypted value.'
+          : message;
+        setResult($('#output'), 'Encryption/decryption failed: ' + failed);
       } finally {
         setBusy(button, false);
       }

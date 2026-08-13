@@ -58,6 +58,21 @@
   }
 }
 
+@layer utilities {
+  .result-flash {
+    animation: result-in 220ms ease;
+  }
+
+  @keyframes result-in {
+    from {
+      opacity: 0.35;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
 /* Vendor-only controls and generated markup that cannot take utility classes. */
 @layer components {
   dialog::backdrop {

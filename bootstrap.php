@@ -14,6 +14,35 @@ define('APP_ROOT', __DIR__);
  */
 define('APP_DEBUG', false);
 
+@ini_set('expose_php', '0');
+@ini_set('display_errors', '0');
+if (!headers_sent()) {
+    header_remove('X-Powered-By');
+}
+
+/** Maximum accepted API input size for str/key/ua payloads. */
+define('APP_MAX_INPUT_BYTES', 65536);
+
+/** bcrypt algorithm floor. Policy default/max come from config.json. */
+define('APP_BCRYPT_COST_MIN', 4);
+define('APP_BCRYPT_COST_ABS_MAX', 31);
+
+/**
+ * PBKDF2 floor for versioned payloads, and a config-file sanity ceiling.
+ * Policy default/max iteration counts come from config.json.
+ */
+define('APP_PBKDF2_ITER_MIN', 100000);
+define('APP_PBKDF2_ITER_ABS_MAX', 600000);
+
+/** Historical binary encryption payload (pre-versioned JSON). */
+define('APP_LEGACY_PBKDF2_ITERATIONS', 120000);
+
+define('APP_ENC_VERSION_V1', 1);
+define('APP_ENC_VERSION', 2);
+define('APP_ENC_SALT_BYTES', 16);
+define('APP_ENC_IV_BYTES', 12);
+define('APP_ENC_TAG_BYTES', 16);
+
 function app_debug(): bool
 {
     $env = getenv('APP_DEBUG');
@@ -26,9 +55,167 @@ function app_debug(): bool
 
 function is_api_request(): bool
 {
-    $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+    $path = rtrim(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', '/') ?: '/';
 
-    return $path === '/api.php' || str_starts_with($path, '/api/');
+    return $path === '/api.php'
+        || $path === '/health'
+        || str_starts_with($path, '/api/');
+}
+
+function app_config_defaults(): array
+{
+    return [
+        'author' => 'Raju Jha',
+        'version' => '1.0.0',
+        'security' => [
+            'bcrypt_cost' => 12,
+            'max_bcrypt_cost' => 14,
+            'encryption_iterations' => 310000,
+            'max_encryption_iterations' => 310000,
+        ],
+    ];
+}
+
+function app_config_invalid(): never
+{
+    render_error_page(500, 'Server error', 'Application configuration is invalid.');
+}
+
+function app_positive_int(mixed $value): ?int
+{
+    if (is_int($value) && $value > 0) {
+        return $value;
+    }
+
+    if (is_string($value) && ctype_digit($value) && $value !== '0') {
+        return (int) $value;
+    }
+
+    return null;
+}
+
+function app_normalize_config(array $decoded, array $defaults): ?array
+{
+    $author = $decoded['author'] ?? $defaults['author'];
+    $version = $decoded['version'] ?? $defaults['version'];
+    if (!is_string($author) || $author === '' || !is_string($version) || $version === '') {
+        return null;
+    }
+
+    $securityIn = is_array($decoded['security'] ?? null) ? $decoded['security'] : [];
+    $securityDefaults = $defaults['security'];
+
+    $bcryptCost = app_positive_int($securityIn['bcrypt_cost'] ?? $securityDefaults['bcrypt_cost']);
+    $maxBcryptCost = app_positive_int($securityIn['max_bcrypt_cost'] ?? $securityDefaults['max_bcrypt_cost']);
+    $encIter = app_positive_int($securityIn['encryption_iterations'] ?? $securityDefaults['encryption_iterations']);
+    $maxEncIter = app_positive_int($securityIn['max_encryption_iterations'] ?? $securityDefaults['max_encryption_iterations']);
+
+    if (
+        $bcryptCost === null
+        || $maxBcryptCost === null
+        || $encIter === null
+        || $maxEncIter === null
+        || $bcryptCost < APP_BCRYPT_COST_MIN
+        || $maxBcryptCost < APP_BCRYPT_COST_MIN
+        || $bcryptCost > $maxBcryptCost
+        || $maxBcryptCost > APP_BCRYPT_COST_ABS_MAX
+        || $encIter < APP_PBKDF2_ITER_MIN
+        || $maxEncIter < APP_PBKDF2_ITER_MIN
+        || $encIter > $maxEncIter
+        || $maxEncIter > APP_PBKDF2_ITER_ABS_MAX
+    ) {
+        return null;
+    }
+
+    $config = [
+        'author' => $author,
+        'version' => $version,
+        'security' => [
+            'bcrypt_cost' => $bcryptCost,
+            'max_bcrypt_cost' => $maxBcryptCost,
+            'encryption_iterations' => $encIter,
+            'max_encryption_iterations' => $maxEncIter,
+        ],
+    ];
+
+    foreach ($decoded as $key => $value) {
+        if (!array_key_exists($key, $config)) {
+            $config[$key] = $value;
+        }
+    }
+
+    return $config;
+}
+
+function app_config(): array
+{
+    static $config = null;
+
+    if ($config !== null) {
+        return $config;
+    }
+
+    $defaults = app_config_defaults();
+    $path = APP_ROOT . DIRECTORY_SEPARATOR . 'config.json';
+
+    if (!is_file($path)) {
+        $config = $defaults;
+        return $config;
+    }
+
+    $decoded = json_decode((string) file_get_contents($path), true);
+    if (!is_array($decoded)) {
+        app_config_invalid();
+    }
+
+    $normalized = app_normalize_config($decoded, $defaults);
+    if ($normalized === null) {
+        app_config_invalid();
+    }
+
+    $config = $normalized;
+    return $config;
+}
+
+function app_security(): array
+{
+    return app_config()['security'];
+}
+
+function public_client_config(): array
+{
+    $security = app_security();
+
+    return [
+        'bcryptCost' => $security['bcrypt_cost'],
+        'maxBcryptCost' => $security['max_bcrypt_cost'],
+        'encryptionIterations' => $security['encryption_iterations'],
+        'maxEncryptionIterations' => $security['max_encryption_iterations'],
+    ];
+}
+
+function health_response(): never
+{
+    if (!headers_sent()) {
+        http_response_code(200);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store, no-cache, must-revalidate, private');
+        header('Pragma: no-cache');
+        header('X-Content-Type-Options: nosniff');
+    }
+
+    $config = app_config();
+
+    echo json_encode(
+        [
+            'status' => 'ok',
+            'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
+            'author' => $config['author'],
+            'version' => $config['version'],
+        ],
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
+    );
+    exit;
 }
 
 function esc(string $value): string
@@ -46,7 +233,15 @@ function json_error_response(string $message, int $status = 500, array $extra = 
     }
 
     echo json_encode(
-        array_merge(['ok' => false, 'error' => $message], $extra),
+        array_merge(
+            [
+                'ok' => false,
+                'tool' => null,
+                'data' => null,
+                'error' => $message,
+            ],
+            $extra
+        ),
         JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
     );
     exit;
@@ -119,6 +314,10 @@ function register_error_handlers(): void
     error_reporting(E_ALL);
     ini_set('display_errors', app_debug() ? '1' : '0');
     ini_set('log_errors', '1');
+    ini_set('expose_php', '0');
+    if (!headers_sent()) {
+        header_remove('X-Powered-By');
+    }
 
     set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
         if (!(error_reporting() & $severity)) {

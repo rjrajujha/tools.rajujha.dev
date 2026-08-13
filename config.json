@@ -1,0 +1,10 @@
+{
+  "author": "Raju Jha",
+  "version": "1.0.0",
+  "security": {
+    "bcrypt_cost": 12,
+    "max_bcrypt_cost": 14,
+    "encryption_iterations": 310000,
+    "max_encryption_iterations": 310000
+  }
+}

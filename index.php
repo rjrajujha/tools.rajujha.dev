@@ -22,13 +22,24 @@ $routes = [
 ];
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$normalizedPath = rtrim($path, '/') ?: '/';
+
+if (
+    $normalizedPath === '/health'
+    || (
+        ($_GET['__route'] ?? '') === 'health'
+        && ($normalizedPath === '/' || $normalizedPath === '/index.php')
+    )
+) {
+    health_response();
+}
 
 if ($path === '/api.php') {
     require __DIR__ . '/api.php';
     exit;
 }
 
-$page = $routes[rtrim($path, '/') ?: '/'] ?? null;
+$page = $routes[$normalizedPath] ?? null;
 
 if ($page === null) {
     render_error_page(
@@ -52,36 +63,59 @@ $tools = [
     ['markdown', 'Markdown Preview', 'Preview Markdown instantly in your browser', 'MD'],
     ['ip', 'IP Checker', 'See IPv4 and IPv6 observed by this server', 'IP'],
     ['secret', 'Secret Generator', 'Generate cryptographic random secrets', 'SX'],
-    ['encryption', 'Encrypt / Decrypt', 'Encrypt and decrypt text with a secret key', 'AE'],
+    ['encryption', 'Encrypt - Decrypt', 'Encrypt and decrypt text with a secret key', 'AE'],
 ];
+
+$security = app_security();
+$bcryptCost = $security['bcrypt_cost'];
+$maxBcryptCost = $security['max_bcrypt_cost'];
+$encIter = $security['encryption_iterations'];
+$maxEncIter = $security['max_encryption_iterations'];
 
 $meta = [
     'password' => ['/api/password', 'GET', 'length, count, upper, lower, numbers, symbols', 'UI uses browser crypto. Optional API for scripts; nothing is stored.'],
-    'hash' => ['/api/hash', 'GET', 'str, algorithm, cost', 'UI uses Web Crypto for SHA-256/384/512. API covers MD5, SHA-1, bcrypt, and all.'],
+    'hash' => [
+        '/api/hash',
+        'POST',
+        'str, algorithm, cost',
+        'UI uses Web Crypto for SHA-256/384/512. API (POST JSON) covers MD5, SHA-1, bcrypt, and all. bcrypt_cost default is '
+            . $bcryptCost . '; max_bcrypt_cost (API ceiling) is ' . $maxBcryptCost
+            . '. Do not send secret keys or sensitive plaintext using GET query parameters.',
+    ],
     'timestamp' => ['/api/timestamp', 'GET', 'timestamp, unit', 'UI clock is local. API converts timestamps or returns current UTC.'],
-    'json' => ['—', '—', '—', 'Browser-only.'],
+    'json' => ['—', '—', '—', 'Browser-only. Processing stays in your browser.'],
     'uuid' => ['/api/uuid', 'GET', 'count', 'UI uses browser crypto. Optional API for scripts.'],
-    'qr' => ['—', '—', '—', 'Browser-only; external QR image service is called only on Generate.'],
-    'regex' => ['—', '—', '—', 'Browser-only.'],
-    'base64' => ['/api/base64', 'GET', 'str, mode', 'UI encodes/decodes locally. API mode is encode or decode.'],
-    'jwt' => ['—', '—', '—', 'Browser-only.'],
+    'qr' => ['—', '—', '—', 'Browser-only. QR codes are generated locally; nothing is sent to a third-party service.'],
+    'regex' => ['—', '—', '—', 'Browser-only. Processing stays in your browser.'],
+    'base64' => ['/api/base64', 'POST', 'str, mode', 'UI encodes/decodes locally. API requires POST JSON. mode is encode or decode.'],
+    'jwt' => ['—', '—', '—', 'Browser-only. Decoding does not verify the signature.'],
     'user-agent' => ['/api/user-agent', 'GET', 'ua', 'UI parses locally. API can use the request header or an explicit ua parameter.'],
-    'markdown' => ['—', '—', '—', 'Browser-only.'],
-    'ip' => ['/api/ip', 'GET', '—', 'Returns server-observed IPv4/IPv6 for this connection.'],
+    'markdown' => ['—', '—', '—', 'Browser-only. Processing stays in your browser.'],
+    'ip' => ['/api/ip', 'GET', '—', 'Returns the server-observed REMOTE_ADDR for this connection. A single connection is IPv4 or IPv6, not both. Proxy headers are listed separately and are not trusted.'],
     'secret' => ['/api/secret', 'GET', 'length, format, count', 'UI uses Web Crypto. Optional API for scripts; nothing is stored.'],
-    'encryption' => ['/api/encryption', 'GET', 'str, key, mode', 'UI uses Web Crypto AES-256-GCM. API mode is encrypt or decrypt.'],
+    'encryption' => [
+        '/api/encryption',
+        'POST',
+        'str, key, mode, iter',
+        'UI uses Web Crypto AES-256-GCM locally and never sends plaintext or keys to the server. '
+            . 'API requires POST JSON. Algorithm: AES-256-GCM. KDF: PBKDF2-HMAC-SHA-256. '
+            . 'encryption_iterations (default) is ' . number_format($encIter) . '; '
+            . 'max_encryption_iterations (API ceiling) is ' . number_format($maxEncIter) . '. '
+            . 'Anyone with the secret key can decrypt. '
+            . 'Do not send secret keys or sensitive plaintext using GET query parameters.',
+    ],
 ];
 
 $examples = [
     'password' => '/api/password?length=24&upper=1&lower=1&numbers=1&symbols=1',
-    'hash' => '/api/hash?str=admin123&algorithm=sha256',
+    'hash' => "POST /api/hash\nContent-Type: application/json\n{\"str\":\"admin123\",\"algorithm\":\"bcrypt\",\"cost\":{$bcryptCost}}",
     'timestamp' => '/api/timestamp?timestamp=1755000000&unit=s',
     'uuid' => '/api/uuid?count=1',
-    'base64' => '/api/base64?str=hello&mode=encode',
+    'base64' => "POST /api/base64\nContent-Type: application/json\n{\"str\":\"hello\",\"mode\":\"encode\"}",
     'user-agent' => '/api/user-agent',
     'ip' => '/api/ip',
     'secret' => '/api/secret?length=48&format=hex',
-    'encryption' => '/api/encryption?str=hello&key=change-me&mode=encrypt',
+    'encryption' => "POST /api/encryption\nContent-Type: application/json\n{\"str\":\"hello\",\"key\":\"your-secret\",\"mode\":\"encrypt\"}",
 ];
 
 $cssVersion = (string) @filemtime(__DIR__ . '/assets/app.css');
@@ -105,8 +139,8 @@ $description = $page === 'home'
     : $toolDesc . ' Runs locally in your browser unless you explicitly use the optional API.';
 
 $field = 'w-full rounded-xl border border-line bg-panel px-3.5 py-3 text-base text-ink outline-none transition placeholder:text-muted/70 focus:border-leaf/50 focus:ring-4 focus:ring-accent/25 sm:text-sm';
-$btn = 'inline-flex min-h-11 w-full shrink-0 touch-manipulation cursor-pointer items-center justify-center rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink transition hover:border-leaf/40 hover:bg-soft disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto';
-$btnPrimary = 'inline-flex min-h-11 w-full shrink-0 touch-manipulation cursor-pointer items-center justify-center rounded-xl bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto';
+$btn = 'inline-flex min-h-11 w-full shrink-0 touch-manipulation cursor-pointer items-center justify-center rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink transition hover:border-leaf/40 hover:bg-soft active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:active:scale-100 sm:w-auto';
+$btnPrimary = 'inline-flex min-h-11 w-full shrink-0 touch-manipulation cursor-pointer items-center justify-center rounded-xl bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-ink/90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:active:scale-100 sm:w-auto';
 $label = 'mb-2 block text-sm font-semibold text-ink';
 $hint = 'mt-3 text-xs leading-relaxed text-muted';
 $result = 'mt-4 flex flex-col items-stretch gap-3 rounded-2xl border border-line bg-soft p-4 sm:flex-row sm:items-start';
@@ -133,8 +167,8 @@ function apiDocs(string $page, array $meta, array $examples): void
     if ($endpoint !== '—') {
         echo '<div><p class="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Endpoint</p><code class="block overflow-x-auto rounded-xl border border-line bg-soft px-3 py-2.5 font-mono text-xs text-ink">' . esc($method . ' ' . $endpoint) . '</code></div>';
         echo '<div><p class="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Parameters</p><code class="block overflow-x-auto rounded-xl border border-line bg-soft px-3 py-2.5 font-mono text-xs text-ink">' . esc($params) . '</code></div>';
-        echo '<div><p class="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Example</p><code class="block overflow-x-auto rounded-xl border border-line bg-soft px-3 py-2.5 font-mono text-xs text-ink">' . esc($examples[$page] ?? '') . '</code></div>';
-        echo '<p class="text-xs leading-relaxed text-muted">JSON response. Avoid putting passwords or sensitive secrets in query strings because URLs can be logged.</p>';
+        echo '<div><p class="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Example</p><code class="block overflow-x-auto whitespace-pre-wrap rounded-xl border border-line bg-soft px-3 py-2.5 font-mono text-xs text-ink">' . esc($examples[$page] ?? '') . '</code></div>';
+        echo '<p class="text-xs leading-relaxed text-muted">JSON shape: { "ok": true, "tool": "...", "data": {}, "error": null }. Sensitive endpoints require POST. Do not put secrets or plaintext in query strings.</p>';
     }
 
     echo '</div></details>';
@@ -271,10 +305,10 @@ function apiDocs(string $page, array $meta, array $examples): void
           <option value="bcrypt">bcrypt</option>
           <option value="all">All supported hashes</option>
         </select>
-        <input id="cost" type="number" min="4" max="31" value="12" title="bcrypt cost" aria-label="bcrypt cost" class="<?= $field ?> hidden sm:max-w-28">
+        <input id="cost" type="number" min="<?= (int) APP_BCRYPT_COST_MIN ?>" max="<?= (int) $maxBcryptCost ?>" value="<?= (int) $bcryptCost ?>" title="bcrypt cost" aria-label="bcrypt cost" class="<?= $field ?> hidden sm:max-w-28">
         <button class="<?= $btnPrimary ?>" id="run" type="button">Hash</button>
       </div>
-      <p class="<?= $hint ?>">SHA-256/384/512 run in your browser. MD5, SHA-1, bcrypt and All use the server API. Press Ctrl+Enter to hash.</p>
+      <p class="<?= $hint ?>">SHA-256/384/512 run in your browser. MD5, SHA-1, bcrypt and All use the POST API. Default bcrypt cost is <?= (int) $bcryptCost ?>; the API rejects cost above <?= (int) $maxBcryptCost ?>. Press Ctrl+Enter to hash. Do not hash secrets you cannot share with this server.</p>
       <div class="<?= $result ?>">
         <pre id="output" class="<?= $resultBody ?>" aria-live="polite"></pre>
         <button id="copy" type="button" class="<?= $btn ?>">Copy</button>
@@ -301,6 +335,7 @@ function apiDocs(string $page, array $meta, array $examples): void
       </div>
 
 <?php elseif ($page === 'json'): ?>
+      <p class="<?= $hint ?> mt-0 mb-3">Processing stays in your browser.</p>
       <label class="<?= $label ?>" for="input">JSON</label>
       <textarea id="input" rows="10" class="<?= $field ?>" placeholder='{"name":"John Doe","active":true}' spellcheck="false"></textarea>
       <div class="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -323,9 +358,20 @@ function apiDocs(string $page, array $meta, array $examples): void
 <?php elseif ($page === 'qr'): ?>
       <label class="<?= $label ?>" for="input">Text or URL</label>
       <input id="input" placeholder="https://example.com" class="<?= $field ?>" autocomplete="off" spellcheck="false">
+      <label class="<?= $label ?> mt-4" for="qrLevel">Error correction</label>
+      <select id="qrLevel" class="<?= $field ?>">
+        <option value="L">L ~7% recovery</option>
+        <option value="M" selected>M ~15% recovery</option>
+        <option value="Q">Q ~25% recovery</option>
+        <option value="H">H ~30% recovery</option>
+      </select>
       <div id="qr" class="mt-4 grid min-h-48 place-items-center rounded-2xl border border-dashed border-line bg-panel px-4 text-center text-sm text-muted sm:min-h-56">Enter text, then generate</div>
-      <button class="<?= $btnPrimary ?> mt-4" id="run" type="button">Generate QR</button>
-      <p class="<?= $hint ?>">Uses the public QR image endpoint only when you click Generate.</p>
+      <div class="mt-4 flex flex-col gap-2 sm:flex-row">
+        <button class="<?= $btnPrimary ?>" id="run" type="button">Generate QR</button>
+        <button id="qrDownloadPng" type="button" class="<?= $btn ?>" disabled>Download PNG</button>
+        <button id="qrDownloadSvg" type="button" class="<?= $btn ?>" disabled>Download SVG</button>
+      </div>
+      <p class="<?= $hint ?>">Generated locally in your browser. Your QR content is not sent to a third-party service.</p>
 
 <?php elseif ($page === 'regex'): ?>
       <label class="<?= $label ?>" for="pattern">Regular expression</label>
@@ -339,6 +385,7 @@ function apiDocs(string $page, array $meta, array $examples): void
       <div class="<?= $result ?>">
         <pre id="output" class="<?= $resultBody ?>" aria-live="polite"></pre>
       </div>
+      <p class="<?= $hint ?>">Runs in your browser. Very complex patterns can freeze the tab; keep patterns short.</p>
 
 <?php elseif ($page === 'base64'): ?>
       <label class="<?= $label ?>" for="input">Text</label>
@@ -351,6 +398,7 @@ function apiDocs(string $page, array $meta, array $examples): void
         <pre id="output" class="<?= $resultBody ?>" aria-live="polite"></pre>
         <button id="copy" type="button" class="<?= $btn ?>">Copy</button>
       </div>
+      <p class="<?= $hint ?>">Encode and decode locally in your browser. The optional API requires POST.</p>
 
 <?php elseif ($page === 'jwt'): ?>
       <label class="<?= $label ?>" for="input">JWT</label>
@@ -366,7 +414,7 @@ function apiDocs(string $page, array $meta, array $examples): void
           <pre id="payloadOut" class="overflow-x-auto whitespace-pre-wrap break-words font-mono text-sm"></pre>
         </div>
       </div>
-      <p class="<?= $hint ?>">Decoding does not verify the signature.</p>
+      <p class="<?= $hint ?>">Decoded locally in your browser. Decoding does not verify the signature.</p>
 
 <?php elseif ($page === 'user-agent'): ?>
       <label class="<?= $label ?>" for="input">User-Agent string</label>
@@ -382,7 +430,7 @@ function apiDocs(string $page, array $meta, array $examples): void
       <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <strong class="block text-sm font-bold text-ink">Markdown Preview</strong>
-          <span class="text-xs text-muted" id="mdStats">0 characters</span>
+          <span class="text-xs text-muted" id="mdStats">0 characters · processed locally</span>
         </div>
         <div class="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
           <button id="mdSample" type="button" class="<?= $btn ?>">Sample</button>
@@ -428,7 +476,7 @@ function apiDocs(string $page, array $meta, array $examples): void
         <button id="copy" type="button" class="<?= $btn ?>">Copy</button>
       </div>
       <button class="<?= $btnPrimary ?> mt-4" id="run" type="button">Refresh IP</button>
-      <p class="<?= $hint ?>">A single TCP connection is either IPv4 or IPv6. The unused family shows as unavailable for this request.</p>
+      <p class="<?= $hint ?>">A single TCP connection is IPv4 or IPv6, not both. This tool uses REMOTE_ADDR only. X-Forwarded-For and X-Real-IP are shown for inspection and are not trusted.</p>
 
 <?php elseif ($page === 'secret'): ?>
       <div class="flex items-center justify-between gap-3">
@@ -451,11 +499,17 @@ function apiDocs(string $page, array $meta, array $examples): void
       <p class="<?= $hint ?>">Generated locally with the Web Crypto API.</p>
 
 <?php elseif ($page === 'encryption'): ?>
-      <label class="<?= $label ?>" for="input">String</label>
+      <label class="<?= $label ?>" for="input">String / Input</label>
       <textarea id="input" rows="5" placeholder="Hello world" class="<?= $field ?>" spellcheck="false"></textarea>
-      <label class="<?= $label ?> mt-4" for="key">Secret key</label>
-      <input id="key" value="secret-key" autocomplete="off" class="<?= $field ?>" spellcheck="false">
-      <div class="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+      <label class="<?= $label ?> mt-4" for="key">Secret Key</label>
+      <input id="key" value="" autocomplete="off" class="<?= $field ?>" spellcheck="false" placeholder="A long random secret">
+      <p class="mt-2 text-sm leading-relaxed text-ink">🔐 Use <a class="font-semibold text-leaf underline underline-offset-2 hover:text-ink" href="/secret">/secret</a> to generate a strong secret key.</p>
+      <ul class="<?= $hint ?> mt-2 list-disc space-y-1 pl-4">
+        <li>For sensitive data, use a long, randomly generated secret instead of a memorable password.</li>
+        <li>Your secret key is not stored by this tool.</li>
+        <li>Anyone with your secret key can decrypt your data.</li>
+      </ul>
+      <div class="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
         <select id="mode" class="<?= $field ?>">
           <option value="encrypt">Encrypt</option>
           <option value="decrypt">Decrypt</option>
@@ -466,7 +520,7 @@ function apiDocs(string $page, array $meta, array $examples): void
         <pre id="output" class="<?= $resultBody ?>" aria-live="polite"></pre>
         <button id="copy" type="button" class="<?= $btn ?>">Copy</button>
       </div>
-      <p class="<?= $hint ?>">AES-256-GCM with PBKDF2, in your browser. Press Ctrl+Enter to run.</p>
+      <p class="<?= $hint ?>">AES-256-GCM with PBKDF2-HMAC-SHA-256 runs entirely in your browser. Plaintext and the secret key are never sent to the server from this page. Press Ctrl+Enter to run.</p>
 <?php endif; ?>
     </section>
     <?php apiDocs($page, $meta[$page], $examples); ?>
@@ -480,6 +534,11 @@ function apiDocs(string $page, array $meta, array $examples): void
     </div>
   </footer>
   <div id="toast" class="pointer-events-none fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 z-40 -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white opacity-0 shadow-lg transition aria-hidden:opacity-0" role="status" aria-live="polite" aria-hidden="true"></div>
+  <script type="application/json" id="app-config"><?= json_encode(public_client_config(), JSON_UNESCAPED_SLASHES) ?></script>
+  <?php if ($page === 'qr'): ?>
+  <script src="/assets/vendor/qrcode-generator.js?v=<?= esc((string) @filemtime(__DIR__ . '/assets/vendor/qrcode-generator.js')) ?>" defer></script>
+  <script src="/assets/vendor/qrcode-generator-utf8.js?v=<?= esc((string) @filemtime(__DIR__ . '/assets/vendor/qrcode-generator-utf8.js')) ?>" defer></script>
+  <?php endif; ?>
   <script src="/assets/app.js?v=<?= esc($jsVersion) ?>" defer></script>
 </body>
 </html>
