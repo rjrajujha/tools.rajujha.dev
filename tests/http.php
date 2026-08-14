@@ -256,6 +256,10 @@ assert_true(
     (bool) preg_match("/api\(\s*\{\s*tool:\s*'ip'\s*\}\s*\)/", $appJs['body']),
     'IP lookup remains a GET with no user payload'
 );
+assert_true(
+    str_contains($appJs['body'], "const path = '/api/' + encodeURIComponent(tool);"),
+    'browser api() calls /api/{tool} so POST can resolve the tool'
+);
 
 $health = http_request('GET', $base . '/health');
 assert_true($health['status'] === 200 && ($health['json']['status'] ?? null) === 'ok', 'GET /health');
@@ -374,6 +378,15 @@ $bigBody = http_request('POST', $base . '/api/hash', json_encode(['str' => $over
     'Content-Type' => 'application/json',
 ]);
 assert_true(in_array($bigBody['status'], [400, 413], true), 'oversized hash input is rejected');
+
+$hashViaApiPhp = http_request('POST', $base . '/api.php', json_encode([
+    'tool' => 'hash',
+    'str' => 'admin123',
+    'algorithm' => 'sha256',
+]), ['Content-Type' => 'application/json']);
+assert_api_envelope($hashViaApiPhp['json'], 'POST /api.php JSON tool=hash', true);
+assert_true($hashViaApiPhp['status'] === 200 && isset(api_data($hashViaApiPhp['json'])['hash']), 'POST /api.php with tool in JSON body hashes');
+assert_true(($hashViaApiPhp['json']['tool'] ?? null) === 'hash', 'POST /api.php JSON tool is hash');
 
 $hashOk = http_request('POST', $base . '/api/hash', json_encode(['str' => 'admin123', 'algorithm' => 'sha256']), [
     'Content-Type' => 'application/json',

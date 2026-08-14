@@ -57,7 +57,26 @@ function reject_method(string $tool, array $allowed, string $message): never
 
 function request_tool(): string
 {
-    return strtolower(trim((string) ($_GET['tool'] ?? '')));
+    static $resolved = null;
+
+    if ($resolved !== null) {
+        return $resolved;
+    }
+
+    $query = strtolower(trim((string) ($_GET['tool'] ?? '')));
+    if ($query !== '') {
+        $resolved = $query;
+        return $resolved;
+    }
+
+    if (request_method() === 'POST') {
+        $body = body_params();
+        $resolved = strtolower(trim((string) ($body['tool'] ?? '')));
+        return $resolved;
+    }
+
+    $resolved = '';
+    return $resolved;
 }
 
 function request_method(): string
@@ -98,6 +117,19 @@ function assert_size(string $value, string $name = 'input'): void
 
 function body_params(): array
 {
+    static $cached = null;
+    static $loading = false;
+
+    if ($cached !== null) {
+        return $cached;
+    }
+
+    if ($loading) {
+        return [];
+    }
+
+    $loading = true;
+
     $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
     if ($contentLength > APP_MAX_INPUT_BYTES + 4096) {
         fail('Request body is too large', 413);
@@ -114,7 +146,9 @@ function body_params(): array
             fail('Request body is too large', 413);
         }
         if ($raw === '') {
-            return [];
+            $cached = [];
+            $loading = false;
+            return $cached;
         }
 
         if (str_contains($raw, "\0")) {
@@ -126,20 +160,26 @@ function body_params(): array
             fail('Invalid JSON body', 400, request_tool() ?: null, 'INVALID_JSON');
         }
 
-        return $decoded;
+        $cached = $decoded;
+        $loading = false;
+        return $cached;
     }
 
-    $tool = request_tool();
+    $tool = strtolower(trim((string) ($_GET['tool'] ?? '')));
     $formTypes = ['', 'application/x-www-form-urlencoded', 'multipart/form-data'];
     if (in_array($contentType, $formTypes, true)) {
-        return $_POST;
+        $cached = $_POST;
+        $loading = false;
+        return $cached;
     }
 
     if (in_array($tool, APP_SENSITIVE_TOOLS, true)) {
         fail('Content-Type must be application/json or application/x-www-form-urlencoded', 415, $tool);
     }
 
-    return $_POST;
+    $cached = $_POST;
+    $loading = false;
+    return $cached;
 }
 
 function request_params(): array

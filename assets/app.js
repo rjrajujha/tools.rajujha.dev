@@ -225,9 +225,10 @@
     const resolved = method
       || (['hash', 'base64', 'encryption'].includes(tool) ? 'POST' : 'GET');
     const post = resolved === 'POST';
+    const path = '/api/' + encodeURIComponent(tool);
     let response;
     try {
-      response = await fetch(post ? '/api.php' : '/api.php?' + new URLSearchParams(params), {
+      response = await fetch(post ? path : path + '?' + new URLSearchParams(params), {
         method: post ? 'POST' : 'GET',
         headers: {
           Accept: 'application/json',
