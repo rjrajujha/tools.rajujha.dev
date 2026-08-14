@@ -220,8 +220,11 @@
     );
   }
 
-  async function api(params, method = 'GET') {
-    const post = method === 'POST';
+  async function api(params, method) {
+    const tool = String(params.tool || '');
+    const resolved = method
+      || (['hash', 'base64', 'encryption'].includes(tool) ? 'POST' : 'GET');
+    const post = resolved === 'POST';
     let response;
     try {
       response = await fetch(post ? '/api.php' : '/api.php?' + new URLSearchParams(params), {
@@ -244,7 +247,10 @@
       throw Error(response.status === 429 ? 'Too many requests. Try again shortly.' : 'Request failed');
     }
     if (!response.ok || data.ok === false) {
-      throw Error(data.error || (response.status === 429 ? 'Too many requests. Try again shortly.' : 'Request failed'));
+      const message = data.error && typeof data.error === 'object' && typeof data.error.message === 'string'
+        ? data.error.message
+        : (response.status === 429 ? 'Too many requests. Try again shortly.' : 'Request failed');
+      throw Error(message);
     }
     return data;
   }

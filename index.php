@@ -81,10 +81,10 @@ $meta = [
     ],
     'hash' => [
         '/api/hash',
-        'POST',
+        'GET, POST',
         'str, algorithm, cost?',
-        'POST only. UI handles SHA-256/384/512 locally; API covers MD5, SHA-1, bcrypt, and all. Default bcrypt cost '
-            . $bcryptCost . ' (max ' . $maxBcryptCost . ').',
+        'GET and POST. UI handles SHA-256/384/512 locally; API covers MD5, SHA-1, bcrypt, and all. Default bcrypt cost '
+            . $bcryptCost . ' (max ' . $maxBcryptCost . '). GET query strings can be logged or cached — prefer POST for secrets.',
     ],
     'timestamp' => [
         '/api/timestamp',
@@ -103,9 +103,9 @@ $meta = [
     'regex' => [null, null, null, 'Browser-only. No server API.'],
     'base64' => [
         '/api/base64',
-        'POST',
+        'GET, POST',
         'str, mode',
-        'POST only. mode is encode or decode. UI can also run locally.',
+        'GET and POST. mode is encode or decode. UI can also run locally. GET query strings can be logged or cached — prefer POST for secrets.',
     ],
     'jwt' => [null, null, null, 'Browser-only. Decoding does not verify signatures.'],
     'user-agent' => [
@@ -129,23 +129,24 @@ $meta = [
     ],
     'encryption' => [
         '/api/encryption',
-        'POST',
+        'GET, POST',
         'str, key, mode, v?, iter?',
-        'POST only. UI stays in the browser. Default v=2; v=1 is legacy. Returns data.compact and data.json. '
-            . 'PBKDF2 iterations default ' . number_format($encIter) . ' (max ' . number_format($maxEncIter) . ').',
+        'GET and POST. UI stays in the browser. Default v=2; v=1 is legacy. Returns data.compact and data.json. '
+            . 'PBKDF2 iterations default ' . number_format($encIter) . ' (max ' . number_format($maxEncIter) . '). '
+            . 'GET query strings can be logged or cached — prefer POST for secrets.',
     ],
 ];
 
 $examples = [
     'password' => 'GET /api/password?length=24&upper=1&lower=1&numbers=1&symbols=1',
-    'hash' => "POST /api/hash\nContent-Type: application/json\n\n{\"str\":\"admin123\",\"algorithm\":\"sha256\"}",
+    'hash' => "GET /api/hash?str=admin123&algorithm=sha256\n\nPOST /api/hash\nContent-Type: application/json\n\n{\"str\":\"admin123\",\"algorithm\":\"sha256\"}",
     'timestamp' => 'GET /api/timestamp?timestamp=1755000000&unit=s',
     'uuid' => 'GET /api/uuid?count=1',
-    'base64' => "POST /api/base64\nContent-Type: application/json\n\n{\"str\":\"hello\",\"mode\":\"encode\"}",
+    'base64' => "GET /api/base64?str=hello&mode=encode\n\nPOST /api/base64\nContent-Type: application/json\n\n{\"str\":\"hello\",\"mode\":\"encode\"}",
     'user-agent' => 'GET /api/user-agent',
     'ip' => 'GET /api/ip',
     'secret' => 'GET /api/secret?length=48&format=hex',
-    'encryption' => "POST /api/encryption\nContent-Type: application/json\n\n{\"str\":\"hello\",\"key\":\"your-secret\",\"mode\":\"encrypt\"}",
+    'encryption' => "GET /api/encryption?str=hello&key=your-secret&mode=encrypt\n\nPOST /api/encryption\nContent-Type: application/json\n\n{\"str\":\"hello\",\"key\":\"your-secret\",\"mode\":\"encrypt\"}",
 ];
 
 $cssVersion = (string) @filemtime(__DIR__ . '/assets/app.css');
@@ -237,9 +238,8 @@ function apiDocs(string $page, array $meta, array $examples, string $iconBtnClas
         if ($example !== '') {
             echo '<div>';
             echo '<p class="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Example</p>';
-            echo '<div class="relative overflow-hidden rounded-xl border border-line bg-soft">';
-            echo '<button type="button" class="absolute right-1 top-1 z-10 ' . esc($iconBtnClass)
-                . ' size-8 hover:bg-white" data-copy-target="#' . esc($exampleId)
+            echo '<div class="relative rounded-xl border border-line bg-soft">';
+            echo '<button type="button" class="absolute right-2 top-2 z-10 inline-flex size-8 shrink-0 touch-manipulation cursor-pointer items-center justify-center rounded-lg border border-line bg-white text-muted shadow-sm transition hover:border-leaf/40 hover:bg-soft hover:text-ink active:scale-[0.98] active:bg-moss motion-reduce:active:scale-100" data-copy-target="#' . esc($exampleId)
                 . '" data-copy-mode="icon" aria-label="Copy example">';
             echo '<svg class="' . esc($iconSvgClass) . ' size-4" viewBox="0 0 24 24" aria-hidden="true">'
                 . '<rect x="9" y="9" width="11" height="11" rx="2"/>'
@@ -247,7 +247,7 @@ function apiDocs(string $page, array $meta, array $examples, string $iconBtnClas
                 . '</svg>';
             echo '</button>';
             echo '<code id="' . esc($exampleId)
-                . '" class="block overflow-x-auto whitespace-pre-wrap px-3 py-2.5 pr-11 font-mono text-xs text-ink">'
+                . '" class="block overflow-x-auto whitespace-pre-wrap pb-3 pl-4 pr-12 pt-11 font-mono text-xs leading-relaxed text-ink">'
                 . esc($example)
                 . '</code>';
             echo '</div></div>';

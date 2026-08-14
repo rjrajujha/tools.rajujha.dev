@@ -36,13 +36,13 @@ function ok(string $tool, array $data): never
     ]);
 }
 
-function fail(string $message, int $status = 400, ?string $tool = null): never
+function fail(string $message, int $status = 400, ?string $tool = null, ?string $code = null): never
 {
     out([
         'ok' => false,
         'tool' => $tool,
         'data' => null,
-        'error' => $message,
+        'error' => app_api_error($code ?? app_error_code_for_status($status), $message),
     ], $status);
 }
 
@@ -82,11 +82,6 @@ function require_http_method(string $tool): void
 {
     $method = request_method();
 
-    if (in_array($tool, APP_SENSITIVE_TOOLS, true)) {
-        require_post($tool);
-        return;
-    }
-
     if (in_array($method, ['GET', 'POST', 'HEAD'], true)) {
         return;
     }
@@ -123,12 +118,12 @@ function body_params(): array
         }
 
         if (str_contains($raw, "\0")) {
-            fail('Invalid JSON body', 400);
+            fail('Invalid JSON body', 400, request_tool() ?: null, 'INVALID_JSON');
         }
 
         $decoded = json_decode($raw, true);
         if (!is_array($decoded) || array_is_list($decoded)) {
-            fail('Invalid JSON body', 400);
+            fail('Invalid JSON body', 400, request_tool() ?: null, 'INVALID_JSON');
         }
 
         return $decoded;
@@ -156,16 +151,14 @@ function request_params(): array
     }
 
     $tool = request_tool();
-
-    if (in_array($tool, APP_SENSITIVE_TOOLS, true)) {
-        $params = array_merge(body_params(), ['tool' => $tool]);
-        return $params;
-    }
-
     $params = $_GET;
 
     if (request_method() === 'POST') {
         $params = array_merge($params, body_params());
+    }
+
+    if ($tool !== '') {
+        $params['tool'] = $tool;
     }
 
     return $params;
@@ -208,7 +201,7 @@ function requireInput(): string
     $params = request_params();
 
     if (!isset($params['str']) && !isset($params['string']) && !isset($params['input'])) {
-        fail('Missing parameter: str', 400, request_tool() ?: null);
+        fail('Missing parameter: str', 400, request_tool() ?: null, 'MISSING_PARAMETER');
     }
 
     $value = inputValue();
@@ -611,7 +604,7 @@ function decrypt_versioned(array $payload, string $secret): string
     }
 
     if ($plain === false) {
-        fail('Decryption failed. Check the secret key and encrypted value.', 400, 'encryption');
+        fail('Decryption failed. Check the secret key and encrypted value.', 400, 'encryption', 'DECRYPTION_FAILED');
     }
 
     return $plain;
@@ -637,7 +630,7 @@ function decrypt_legacy(string $input, string $secret): string
     }
 
     if ($plain === false) {
-        fail('Decryption failed. Check the secret key and encrypted value.', 400, 'encryption');
+        fail('Decryption failed. Check the secret key and encrypted value.', 400, 'encryption', 'DECRYPTION_FAILED');
     }
 
     return $plain;
@@ -646,8 +639,7 @@ function decrypt_legacy(string $input, string $secret): string
 $tool = request_tool();
 
 if ($tool !== '' && !in_array(request_method(), ['GET', 'POST', 'HEAD'], true)) {
-    $allowed = in_array($tool, APP_SENSITIVE_TOOLS, true) ? ['POST'] : ['GET', 'POST'];
-    reject_method($tool, $allowed, 'Method not allowed');
+    reject_method($tool, ['GET', 'POST'], 'Method not allowed');
 }
 
 require_http_method($tool);
@@ -863,7 +855,7 @@ if ($tool === 'user-agent') {
     assert_size($ua, 'ua');
 
     if ($ua === '') {
-        fail('Missing User-Agent. Pass ua=... or call from a browser.', 400, 'user-agent');
+        fail('Missing User-Agent. Pass ua=... or call from a browser.', 400, 'user-agent', 'MISSING_PARAMETER');
     }
 
     ok('user-agent', parseUserAgent($ua));
@@ -931,7 +923,7 @@ if ($tool === 'encryption') {
     assert_size($key, 'key');
 
     if ($key === '') {
-        fail('Missing parameter: key', 400, 'encryption');
+        fail('Missing parameter: key', 400, 'encryption', 'MISSING_PARAMETER');
     }
 
     if ($mode === 'encrypt') {
@@ -969,7 +961,7 @@ if ($tool === 'encryption') {
 
     if ($mode === 'decrypt') {
         if ($str === '') {
-            fail('Missing parameter: str', 400, 'encryption');
+            fail('Missing parameter: str', 400, 'encryption', 'MISSING_PARAMETER');
         }
 
         $plain = decrypt_payload($str, $key);

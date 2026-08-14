@@ -113,8 +113,32 @@ function assert_api_envelope(?array $json, string $label, ?bool $expectOk = null
     } elseif ($expectOk === false) {
         assert_true($json['ok'] === false, $label . ' ok is false');
         assert_true($json['data'] === null || is_array($json['data']), $label . ' data is null or object');
-        assert_true(is_string($json['error']) && $json['error'] !== '', $label . ' error is a non-empty string');
+        $error = $json['error'] ?? null;
+        assert_true(is_array($error), $label . ' error is an object');
+        if (is_array($error)) {
+            $errorKeys = array_keys($error);
+            sort($errorKeys);
+            assert_true($errorKeys === ['code', 'message'], $label . ' error keys are exactly code/message');
+            assert_true(is_string($error['code']) && $error['code'] !== '' && (bool) preg_match('/^[A-Z][A-Z0-9_]*$/', $error['code']), $label . ' error.code is a stable code');
+            assert_true(is_string($error['message']) && $error['message'] !== '', $label . ' error.message is a non-empty string');
+        }
     }
+}
+
+/**
+ * @param array<string, mixed>|null $json
+ */
+function api_error_code(?array $json): string
+{
+    return is_array($json['error'] ?? null) ? (string) ($json['error']['code'] ?? '') : '';
+}
+
+/**
+ * @param array<string, mixed>|null $json
+ */
+function api_error_message(?array $json): string
+{
+    return is_array($json['error'] ?? null) ? (string) ($json['error']['message'] ?? '') : '';
 }
 
 /**
@@ -186,15 +210,52 @@ assert_true(str_contains($encPage['body'], 'Encrypted JSON / Object'), 'Encrypt 
 assert_true(substr_count($encPage['body'], '>Copy</button>') >= 3, 'Encrypt/Decrypt copy buttons are labeled Copy');
 assert_true(!str_contains($encPage['body'], 'Copy encrypted'), 'long Copy labels are not used');
 assert_true(!str_contains($encPage['body'], 'Copy decrypted'), 'Decrypt copy button is labeled Copy');
-assert_true(str_contains($encPage['body'], 'How to use this tool as an API'), 'API docs card is present');
+assert_true(str_contains($encPage['body'], 'GET, POST'), 'encryption API docs list GET and POST');
+assert_true(str_contains($encPage['body'], 'GET /api/encryption'), 'encryption API docs include a GET example');
+assert_true(str_contains($encPage['body'], 'POST /api/encryption'), 'encryption API docs include a POST example');
+assert_true(str_contains($encPage['body'], 'logged or cached'), 'encryption API docs warn about GET URLs');
+assert_true(str_contains($encPage['body'], 'absolute right-2 top-2'), 'copy icon is absolutely positioned top-right');
+assert_true(str_contains($encPage['body'], 'pt-11') && str_contains($encPage['body'], 'pr-12'), 'example code has top and right padding for the copy icon');
 assert_true(
     (bool) preg_match('/data-copy-target="#apiExample-encryption"[^>]*aria-label="Copy example"|aria-label="Copy example"[^>]*data-copy-target="#apiExample-encryption"/', $encPage['body'])
     || (str_contains($encPage['body'], 'data-copy-target="#apiExample-encryption"') && str_contains($encPage['body'], 'aria-label="Copy example"')),
     'API example box includes an inline copy control'
 );
+assert_true(!str_contains($encPage['body'], 'flex items-center justify-end'), 'copy icon is not in a left-default flex toolbar');
 assert_true(!str_contains($encPage['body'], 'Copy API Example'), 'full-width Copy API Example button is removed');
 assert_true(!str_contains($encPage['body'], 'JSON envelope:'), 'repetitive envelope warning is removed from tool API cards');
 assert_true(!str_contains($encPage['body'], 'Result fields live only inside data'), 'repetitive envelope prose is removed from tool API cards');
+
+$apiExamplePages = ['password', 'hash', 'timestamp', 'uuid', 'base64', 'user-agent', 'ip', 'secret', 'encryption'];
+foreach ($apiExamplePages as $toolPage) {
+    $toolHtml = $toolPage === 'encryption' ? $encPage : http_request('GET', $base . '/' . $toolPage);
+    assert_true($toolHtml['status'] === 200, 'GET /' . $toolPage . ' for API example copy icon');
+    assert_true(
+        str_contains($toolHtml['body'], 'absolute right-2 top-2')
+            && str_contains($toolHtml['body'], 'data-copy-mode="icon"')
+            && str_contains($toolHtml['body'], 'aria-label="Copy example"')
+            && str_contains($toolHtml['body'], 'data-copy-target="#apiExample-' . $toolPage . '"')
+            && str_contains($toolHtml['body'], 'pt-11')
+            && str_contains($toolHtml['body'], 'pr-12')
+            && str_contains($toolHtml['body'], 'pl-4'),
+        '/' . $toolPage . ' API example copy icon is top-right with padded code'
+    );
+}
+
+$appJs = http_request('GET', $base . '/assets/app.js');
+assert_true($appJs['status'] === 200, 'GET /assets/app.js');
+assert_true(
+    str_contains($appJs['body'], "['hash', 'base64', 'encryption'].includes(tool) ? 'POST' : 'GET'"),
+    'browser api() defaults hash/base64/encryption to POST'
+);
+assert_true(
+    (bool) preg_match("/api\(\s*\{[\s\S]*?tool:\s*'hash'[\s\S]*?\},\s*'POST'\s*\)/", $appJs['body']),
+    'hash UI sends user input via POST'
+);
+assert_true(
+    (bool) preg_match("/api\(\s*\{\s*tool:\s*'ip'\s*\}\s*\)/", $appJs['body']),
+    'IP lookup remains a GET with no user payload'
+);
 
 $health = http_request('GET', $base . '/health');
 assert_true($health['status'] === 200 && ($health['json']['status'] ?? null) === 'ok', 'GET /health');
@@ -231,18 +292,29 @@ assert_true(($ipData['proxy_headers']['trusted'] ?? null) === false, 'proxy head
 assert_true(($ipData['ip'] ?? null) !== '8.8.8.8', 'X-Forwarded-For is not used as client IP');
 assert_true(!array_key_exists('ip', $ip['json'] ?? []), 'ip is not duplicated at root');
 
-$hashGet = http_request('GET', $base . '/api/hash?str=secret');
-assert_true($hashGet['status'] === 405, 'GET /api/hash is 405');
-assert_true(header_has($hashGet['headers'], 'allow', 'POST'), 'GET /api/hash Allow: POST');
+$hashGet = http_request('GET', $base . '/api/hash?str=admin123&algorithm=sha256');
+assert_api_envelope($hashGet['json'], 'GET /api/hash', true);
+assert_true($hashGet['status'] === 200 && isset(api_data($hashGet['json'])['hash']), 'GET /api/hash sha256');
+assert_true(!array_key_exists('hash', $hashGet['json'] ?? []), 'GET hash is not duplicated at root');
+assert_true(header_has($hashGet['headers'], 'cache-control', 'no-store'), 'GET /api/hash is not cacheable');
+
+$badAlg = http_request('GET', $base . '/api/hash?str=admin123&algorithm=nope');
+assert_api_envelope($badAlg['json'], 'unsupported algorithm', false);
+assert_true($badAlg['status'] === 400, 'unsupported algorithm is 400');
+assert_true(api_error_code($badAlg['json']) === 'INVALID_PARAMETER', 'unsupported algorithm uses INVALID_PARAMETER');
+assert_true(api_error_message($badAlg['json']) === 'Unsupported algorithm', 'unsupported algorithm message is stable');
 
 $putPassword = http_request('PUT', $base . '/api/password');
 assert_true($putPassword['status'] === 405, 'PUT /api/password is 405');
+assert_true(header_has($putPassword['headers'], 'allow', 'GET'), 'PUT /api/password Allow includes GET');
+assert_true(api_error_code($putPassword['json']) === 'METHOD_NOT_ALLOWED', 'PUT uses METHOD_NOT_ALLOWED');
 
 $badJson = http_request('POST', $base . '/api/hash', '{', [
     'Content-Type' => 'application/json',
 ]);
 assert_api_envelope($badJson['json'], 'malformed JSON', false);
 assert_true($badJson['status'] === 400 && ($badJson['json']['ok'] ?? null) === false, 'malformed JSON is 400');
+assert_true(api_error_code($badJson['json']) === 'INVALID_JSON', 'malformed JSON uses INVALID_JSON');
 
 $jsonList = http_request('POST', $base . '/api/hash', '["x"]', [
     'Content-Type' => 'application/json',
@@ -310,6 +382,15 @@ assert_api_envelope($hashOk['json'], 'POST /api/hash', true);
 assert_true($hashOk['status'] === 200 && isset(api_data($hashOk['json'])['hash']), 'POST /api/hash sha256');
 assert_true(!array_key_exists('hash', $hashOk['json'] ?? []), 'hash is not duplicated at root');
 assert_true(header_has($hashOk['headers'], 'cache-control', 'no-store'), 'POST /api/hash is not cacheable');
+assert_true(
+    (api_data($hashGet['json'])['hash'] ?? null) === (api_data($hashOk['json'])['hash'] ?? null),
+    'GET and POST /api/hash return the same digest'
+);
+
+$b64Get = http_request('GET', $base . '/api/base64?str=hello&mode=encode');
+assert_api_envelope($b64Get['json'], 'GET /api/base64', true);
+assert_true($b64Get['status'] === 200 && (api_data($b64Get['json'])['output'] ?? null) === base64_encode('hello'), 'GET /api/base64');
+assert_true(!array_key_exists('output', $b64Get['json'] ?? []), 'GET base64 output is not duplicated at root');
 
 $b64 = http_request('POST', $base . '/api/base64', json_encode(['str' => 'hello', 'mode' => 'encode']), [
     'Content-Type' => 'application/json',
@@ -347,7 +428,7 @@ $enc = http_request('POST', $base . '/api/encryption', json_encode([
 ]), ['Content-Type' => 'application/json']);
 
 $opensslOk = $enc['status'] === 200 && is_array(api_data($enc['json'])['json'] ?? null);
-assert_true($opensslOk || str_contains((string) ($enc['json']['error'] ?? ''), 'OpenSSL'), 'POST /api/encryption encrypt or OpenSSL unavailable');
+assert_true($opensslOk || str_contains(api_error_message($enc['json']), 'OpenSSL'), 'POST /api/encryption encrypt or OpenSSL unavailable');
 
 if ($opensslOk) {
     assert_api_envelope($enc['json'], 'POST /api/encryption encrypt', true);
@@ -364,6 +445,18 @@ if ($opensslOk) {
     assert_true(!array_key_exists('compact', $enc['json'] ?? []), 'compact is not duplicated at root');
     assert_true(!str_contains($enc['body'], 'unit-test-key'), 'encrypt response does not contain the secret');
     assert_true(!str_contains($enc['body'], '"hello"'), 'encrypt response does not contain plaintext');
+
+    reset_rate_limit_files();
+    $encGet = http_request(
+        'GET',
+        $base . '/api/encryption?str=hello&key=' . rawurlencode('unit-test-key') . '&mode=encrypt'
+    );
+    assert_api_envelope($encGet['json'], 'GET /api/encryption encrypt', true);
+    assert_true($encGet['status'] === 200, 'GET /api/encryption encrypt');
+    $encGetData = api_data($encGet['json']);
+    assert_true(($encGetData['version'] ?? null) === 2 && is_string($encGetData['compact'] ?? null), 'GET encryption returns compact V2');
+    assert_true(!array_key_exists('compact', $encGet['json'] ?? []), 'GET encryption compact is not duplicated at root');
+    assert_true(!str_contains($encGet['body'], 'unit-test-key'), 'GET encrypt response does not contain the secret');
 
     $defaultV = http_request('POST', $base . '/api/encryption', json_encode([
         'str' => 'hello',
@@ -648,6 +741,7 @@ foreach (range(0, 24) as $i) {
 }
 if ($retry !== null) {
     assert_api_envelope($retry['json'], '429 response', false);
+    assert_true(api_error_code($retry['json']) === 'RATE_LIMITED', '429 uses RATE_LIMITED');
     assert_true(isset($retry['headers']['retry-after']), '429 includes Retry-After');
     assert_true(header_has($retry['headers'], 'cache-control', 'no-store'), '429 is not cacheable');
 }

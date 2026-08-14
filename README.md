@@ -8,7 +8,7 @@ PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tool
 
 - Clean URLs for every utility
 - Browser-first processing whenever it is safe
-- JSON APIs for scripting (GET only for safe/generated values)
+- JSON APIs for scripting (GET on all endpoints; POST also for hash, base64, and encryption)
 - No cookies, accounts, localStorage, sessionStorage, or analytics
 - Security headers, CSP, and blocked access to sensitive files
 - Application rate limiting on expensive APIs (20 requests / 60 seconds by default)
@@ -19,25 +19,25 @@ PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tool
 | Tool | Route | Where it runs | API |
 |---|---|---|---|
 | Password Generator | `/password` | Browser + optional API | `GET /api/password` |
-| Hash | `/hash` | Browser for SHA-2; API for MD5, SHA-1, bcrypt, all | `POST /api/hash` |
+| Hash | `/hash` | Browser for SHA-2; API for MD5, SHA-1, bcrypt, all | `GET` / `POST /api/hash` |
 | Timestamp | `/timestamp` | Browser clock + optional API | `GET /api/timestamp` |
 | JSON Decoder | `/json` | Browser only | — |
 | UUID Generator | `/uuid` | Browser Web Crypto + optional API | `GET /api/uuid` |
 | QR Code Generator | `/qr` | Browser only, local library | — |
 | Regex Tester | `/regex` | Browser Web Worker | — |
-| Base64 | `/base64` | Browser + optional API | `POST /api/base64` |
+| Base64 | `/base64` | Browser + optional API | `GET` / `POST /api/base64` |
 | JWT Decoder | `/jwt` | Browser only | — |
 | User-Agent Parser | `/user-agent` | Browser + optional API | `GET /api/user-agent` |
 | Markdown Preview | `/markdown` | Browser only | — |
 | IP Checker | `/ip` | Server-observed `REMOTE_ADDR` | `GET /api/ip` |
 | Secret Generator | `/secret` | Browser Web Crypto + optional API | `GET /api/secret` |
-| Encrypt-Decrypt | `/encryption` | Browser Web Crypto only in the UI | `POST /api/encryption` |
+| Encrypt-Decrypt | `/encryption` | Browser Web Crypto only in the UI | `GET` / `POST /api/encryption` |
 
 ## Privacy and security
 
 - Output is escaped in PHP. Markdown allows only safe `http(s)` links
 - CSP is same-origin; no third-party scripts or analytics
-- Sensitive APIs (`hash`, `base64`, `encryption`) require POST — do not put secrets or plaintext in query strings
+- Sensitive APIs (`hash`, `base64`, `encryption`) accept GET and POST. Prefer POST — secrets and plaintext in GET URLs can be logged or cached
 - Encrypt-Decrypt runs locally in the browser when Web Crypto is available; the UI does not silently fall back to the API
 - bcrypt and encryption iteration ceilings come from `config.json`
 - Application rate limiting protects expensive endpoints; identity uses `REMOTE_ADDR` (hashed on disk). Proxy headers are not trusted by default. Set `client_ip.trust_cloudflare` only when the origin accepts traffic exclusively from Cloudflare
@@ -80,11 +80,14 @@ Failure:
   "ok": false,
   "tool": "hash",
   "data": null,
-  "error": "A useful error message"
+  "error": {
+    "code": "INVALID_PARAMETER",
+    "message": "Unsupported algorithm"
+  }
 }
 ```
 
-Sensitive endpoints: `POST /api/hash`, `POST /api/base64`, `POST /api/encryption` (JSON or form-encoded). Request bodies and string inputs are limited to 65,536 bytes.
+Sensitive endpoints (`/api/hash`, `/api/base64`, `/api/encryption`) accept GET and POST. Prefer POST for secrets — GET query strings can be logged or cached. Request bodies and string inputs are limited to 65,536 bytes.
 
 Safe GET examples: `/api/password`, `/api/uuid`, `/api/secret`, `/api/timestamp`, `/api/ip`, `/api/user-agent`.
 
@@ -93,6 +96,8 @@ Safe GET examples: `/api/password`, `/api/uuid`, `/api/secret`, `/api/timestamp`
 ### Encryption
 
 ```text
+GET /api/encryption?str=hello&key=your-secret&mode=encrypt
+
 POST /api/encryption
 Content-Type: application/json
 

@@ -477,10 +477,34 @@ function app_json_encode(array $payload): string
     );
 
     if (!is_string($json) || $json === '') {
-        return '{"ok":false,"tool":null,"data":null,"error":"Unable to encode response"}';
+        return '{"ok":false,"tool":null,"data":null,"error":{"code":"INTERNAL_ERROR","message":"Unable to encode response"}}';
     }
 
     return $json;
+}
+
+function app_error_code_for_status(int $status): string
+{
+    return match ($status) {
+        404 => 'NOT_FOUND',
+        405 => 'METHOD_NOT_ALLOWED',
+        413 => 'PAYLOAD_TOO_LARGE',
+        415 => 'UNSUPPORTED_MEDIA_TYPE',
+        429 => 'RATE_LIMITED',
+        500, 502, 503 => 'INTERNAL_ERROR',
+        default => 'INVALID_PARAMETER',
+    };
+}
+
+/**
+ * @return array{code: string, message: string}
+ */
+function app_api_error(string $code, string $message): array
+{
+    return [
+        'code' => $code,
+        'message' => $message,
+    ];
 }
 
 function json_error_response(string $message, int $status = 500, array $extra = []): never
@@ -497,11 +521,15 @@ function json_error_response(string $message, int $status = 500, array $extra = 
         $data = ['detail' => $extra['detail']];
     }
 
+    $code = isset($extra['code']) && is_string($extra['code']) && $extra['code'] !== ''
+        ? $extra['code']
+        : app_error_code_for_status($status);
+
     echo app_json_encode([
         'ok' => false,
         'tool' => $extra['tool'] ?? null,
         'data' => $data,
-        'error' => $message,
+        'error' => app_api_error($code, $message),
     ]);
     exit;
 }
