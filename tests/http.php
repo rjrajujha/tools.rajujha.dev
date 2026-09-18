@@ -186,8 +186,9 @@ assert_true(str_contains($home['body'], 'SSH Key Generator'), 'home lists SSH Ke
 assert_true(str_contains($home['body'], 'DNS Lookup'), 'home lists DNS Lookup');
 assert_true(!str_contains($home['body'], 'Encrypt - Decrypt') && !str_contains($home['body'], 'Encrypt / Decrypt'), 'home does not use old encryption names');
 assert_true(header_has($home['headers'], 'content-security-policy', "default-src 'self'"), 'CSP defaults to same-origin');
-assert_true(header_has($home['headers'], 'content-security-policy', 'dns.rajujha.dev'), 'CSP allows the default DoH host');
 assert_true(header_has($home['headers'], 'content-security-policy', 'cloudflare-dns.com'), 'CSP allows Cloudflare DoH');
+assert_true(header_has($home['headers'], 'content-security-policy', 'dns.google'), 'CSP allows Google Public DNS DoH');
+assert_true(!header_has($home['headers'], 'content-security-policy', 'dns.rajujha.dev'), 'CSP does not allow the retired AdGuard DoH host');
 assert_true(header_has($home['headers'], 'x-content-type-options', 'nosniff'), 'HTML responses send nosniff');
 
 $encPage = http_request('GET', $base . '/encryption');
@@ -269,13 +270,14 @@ assert_true(
     'browser api() calls /api/{tool} so POST can resolve the tool'
 );
 assert_true(
-    str_contains($appJs['body'], 'https://dns.rajujha.dev/dns-query/tools')
-        && str_contains($appJs['body'], 'https://cloudflare-dns.com/dns-query'),
-    'DNS UI prefers browser DoH endpoints'
+    str_contains($appJs['body'], 'https://cloudflare-dns.com/dns-query')
+        && str_contains($appJs['body'], 'https://dns.google/resolve'),
+    'DNS UI prefers Cloudflare then Google browser DoH'
 );
-assert_true(str_contains($appJs['body'], 'application/dns-json'), 'DNS UI requests DNS-over-HTTPS JSON from Cloudflare');
-assert_true(str_contains($appJs['body'], 'application/dns-message'), 'DNS UI requests RFC 8484 DoH from the default provider');
-assert_true(str_contains($appJs['body'], '?dns='), 'default DoH uses the dns= wire query');
+assert_true(str_contains($appJs['body'], "const DNS_ORDER = ['cloudflare', 'google']"), 'DNS UI tries Cloudflare then Google');
+assert_true(str_contains($appJs['body'], 'application/dns-json'), 'DNS UI requests DNS-over-HTTPS JSON');
+assert_true(!str_contains($appJs['body'], 'application/dns-message'), 'DNS UI does not use RFC 8484 wire format');
+assert_true(!str_contains($appJs['body'], 'dns.rajujha.dev'), 'DNS UI does not use the retired AdGuard DoH host');
 assert_true(str_contains($appJs['body'], "credentials: 'omit'"), 'DoH fetches are credential-less');
 assert_true(str_contains($appJs['body'], "cache: 'no-store'"), 'DoH fetches are not stored in the HTTP cache');
 assert_true(str_contains($appJs['body'], 'dnsCache'), 'DNS lookups are cached in memory for the session');
@@ -376,9 +378,12 @@ assert_true(str_contains($sshPage['body'], 'id="sshPassphraseToggle"'), 'SSH pas
 
 $dnsPage = http_request('GET', $base . '/dns');
 assert_true($dnsPage['status'] === 200 && str_contains($dnsPage['body'], 'DNS Lookup'), 'GET /dns');
-assert_true(str_contains($dnsPage['body'], 'value="default" selected'), 'DNS defaults to the default provider');
+assert_true(!str_contains($dnsPage['body'], 'id="dnsProvider"'), 'DNS has no provider dropdown');
+assert_true(str_contains($dnsPage['body'], 'id="dnsHost"') && str_contains($dnsPage['body'], 'id="dnsType"'), 'DNS keeps host and type controls');
 assert_true(str_contains($dnsPage['body'], 'id="dnsCards"'), 'DNS results use full-width cards');
-assert_true(str_contains($dnsPage['body'], 'retries the other provider'), 'DNS page documents CORS retry then API fallback');
+assert_true(str_contains($dnsPage['body'], 'Cloudflare DNS-over-HTTPS first'), 'DNS page documents Cloudflare as the default');
+assert_true(str_contains($dnsPage['body'], 'Google Public DNS'), 'DNS page documents Google as the browser fallback');
+assert_true(str_contains($dnsPage['body'], "this site\u{2019}s API") || str_contains($dnsPage['body'], "this site's API"), 'DNS page documents the API as the final fallback');
 
 $hashGet = http_request('GET', $base . '/api/hash?str=admin123&algorithm=sha256');
 assert_api_envelope($hashGet['json'], 'GET /api/hash', true);
@@ -556,14 +561,27 @@ if ($dnsLookup['status'] === 200) {
     assert_true(api_error_code($dnsLookup['json']) === 'LOOKUP_FAILED', 'DNS upstream failure uses LOOKUP_FAILED');
 }
 
-$dnsDefault = http_request('GET', $base . '/api/dns?host=example.com&type=A&provider=default');
-assert_true(in_array($dnsDefault['status'], [200, 502], true), 'default DNS provider is accepted');
-if ($dnsDefault['status'] === 200) {
-    assert_api_envelope($dnsDefault['json'], 'GET /api/dns default', true);
-    assert_true((api_data($dnsDefault['json'])['provider'] ?? null) === 'default', 'DNS lookup reports default provider');
-    assert_true(is_array(api_data($dnsDefault['json'])['answers'] ?? null), 'default DNS lookup returns answers array');
-    assert_true(count(api_data($dnsDefault['json'])['answers']) <= 8, 'default DNS lookup returns at most 8 answers');
+$dnsGoogle = http_request('GET', $base . '/api/dns?host=example.com&type=A&provider=google');
+assert_true(in_array($dnsGoogle['status'], [200, 502], true), 'Google DNS provider is accepted');
+if ($dnsGoogle['status'] === 200) {
+    assert_api_envelope($dnsGoogle['json'], 'GET /api/dns google', true);
+    assert_true((api_data($dnsGoogle['json'])['provider'] ?? null) === 'google', 'DNS lookup reports google');
+    assert_true(is_array(api_data($dnsGoogle['json'])['answers'] ?? null), 'Google DNS lookup returns answers array');
+    assert_true(count(api_data($dnsGoogle['json'])['answers']) <= 8, 'Google DNS lookup returns at most 8 answers');
+} else {
+    assert_true(api_error_code($dnsGoogle['json']) === 'LOOKUP_FAILED', 'Google DNS upstream failure uses LOOKUP_FAILED');
 }
+
+$dnsAuto = http_request('GET', $base . '/api/dns?host=example.com&type=A');
+assert_true(in_array($dnsAuto['status'], [200, 502], true), 'omitted DNS provider is accepted');
+if ($dnsAuto['status'] === 200) {
+    assert_api_envelope($dnsAuto['json'], 'GET /api/dns auto provider', true);
+    assert_true(in_array(api_data($dnsAuto['json'])['provider'] ?? null, ['cloudflare', 'google'], true), 'omitted provider uses Cloudflare then Google');
+}
+
+$dnsLegacyProvider = http_request('GET', $base . '/api/dns?host=example.com&type=A&provider=default');
+assert_true($dnsLegacyProvider['status'] === 400, 'retired default DNS provider is rejected');
+assert_true(api_error_code($dnsLegacyProvider['json']) === 'INVALID_PARAMETER' || str_contains((string) api_error_message($dnsLegacyProvider['json']), 'cloudflare or google'), 'retired provider names the allowed resolvers');
 
 reset_rate_limit_files();
 

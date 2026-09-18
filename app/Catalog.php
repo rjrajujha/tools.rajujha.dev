@@ -170,7 +170,7 @@ final class Catalog
                 '/api/dns',
                 'GET',
                 'host, type?, provider?',
-                'Looks up DNS records in the browser first (JSON DoH for Cloudflare, RFC 8484 for the default provider). A CORS or network failure retries the other provider, then this API. Answers are decoded JSON, not raw DNS wire. provider is default or cloudflare. type is A, AAAA, MX, TXT, CNAME, or NS. Up to 8 records are returned.',
+                'Looks up DNS records in the browser first: Cloudflare JSON DoH, then Google Public DNS, then this API. Answers are JSON (`provider`, `host`, `type`, `status`, `status_name`, `answers`). provider is optional: cloudflare (default) or google. type is A, AAAA, MX, TXT, CNAME, or NS. Up to 8 records are returned.',
             ],
         ];
     }
@@ -192,7 +192,7 @@ final class Catalog
             'encryption' => "GET /api/encryption?str=hello&key=your-secret&mode=encrypt\n\nPOST /api/encryption\nContent-Type: application/json\n\n{\"str\":\"hello\",\"key\":\"your-secret\",\"mode\":\"encrypt\"}",
             'hash-validation' => "GET /api/hash-validation?str=admin123&hash=240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9&algorithm=sha256\n\nPOST /api/hash-validation\nContent-Type: application/json\n\n{\"str\":\"admin123\",\"hash\":\"240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9\",\"algorithm\":\"sha256\"}",
             'ssh' => "GET /api/ssh?algorithm=ed25519\n\nPOST /api/ssh\nContent-Type: application/json\n\n{\"algorithm\":\"ed25519\",\"comment\":\"laptop\",\"passphrase\":\"optional\"}",
-            'dns' => 'GET /api/dns?host=example.com&type=A&provider=default',
+            'dns' => 'GET /api/dns?host=example.com&type=A',
         ];
     }
 

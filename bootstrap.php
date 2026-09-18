@@ -276,7 +276,7 @@ function app_send_security_headers(): void
     header(
         "Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; "
         . "script-src 'self'; worker-src 'self'; "
-        . "connect-src 'self' https://dns.rajujha.dev https://cloudflare-dns.com; object-src 'none'; "
+        . "connect-src 'self' https://cloudflare-dns.com https://dns.google; object-src 'none'; "
         . "base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
     );
     header_remove('X-Powered-By');

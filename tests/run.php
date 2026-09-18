@@ -173,15 +173,5 @@ assert_true(
     'bcrypt_pbkdf matches the OpenBSD/golang password/salt rounds=12 vector'
 );
 
-$dnsWire = hex2bin('1234818000010002000000000772616a756a6861036465760000010001c00c000100010000012c0004ac439a46c00c000100010000012c0004681529fc');
-assert_true(is_string($dnsWire) && $dnsWire !== '', 'sample DNS message decodes from hex');
-$dnsAnswers = \App\Support\DnsMessage::decodeAnswers($dnsWire);
-assert_true(count($dnsAnswers) === 2, 'DNS wire decoder returns two A records');
-assert_true(($dnsAnswers[0]['data'] ?? '') === '172.67.154.70', 'DNS wire decoder reads the first A record');
-assert_true(($dnsAnswers[1]['data'] ?? '') === '104.21.41.252', 'DNS wire decoder reads the second A record');
-assert_true(\App\Support\DnsMessage::responseCode($dnsWire) === 0, 'DNS wire decoder reads NOERROR');
-$query = \App\Support\DnsMessage::encodeQuery('rajujha.dev', 'A');
-assert_true(strlen($query) > 12 && \App\Support\DnsMessage::base64url($query) !== '', 'DNS query encoder produces a base64url payload');
-
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

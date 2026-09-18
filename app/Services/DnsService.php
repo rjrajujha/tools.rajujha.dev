@@ -3,10 +3,19 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Support\DnsMessage;
-
 final class DnsService
 {
+    private const PROVIDERS = [
+        'cloudflare' => [
+            'url' => 'https://cloudflare-dns.com/dns-query',
+            'accept' => 'application/dns-json',
+        ],
+        'google' => [
+            'url' => 'https://dns.google/resolve',
+            'accept' => 'application/dns-json',
+        ],
+    ];
+
     public static function handle(): never
     {
         $host = trim(param('host', param('name')));
@@ -24,22 +33,27 @@ final class DnsService
             fail('type must be A, AAAA, MX, TXT, CNAME, or NS', 400, 'dns');
         }
 
-        $provider = strtolower(trim(param('provider', 'default')));
-        if (!in_array($provider, ['default', 'cloudflare'], true)) {
-            fail('provider must be default or cloudflare', 400, 'dns');
+        $requested = strtolower(trim(param('provider', 'cloudflare')));
+        if ($requested === '') {
+            $requested = 'cloudflare';
+        }
+        if (!isset(self::PROVIDERS[$requested])) {
+            fail('provider must be cloudflare or google', 400, 'dns');
         }
 
         $host = rtrim($host, '.');
+        $explicit = array_key_exists('provider', request_params());
+        $order = $explicit ? [$requested] : ['cloudflare', 'google'];
 
-        try {
-            $result = $provider === 'cloudflare'
-                ? self::lookupJson($host, $type, $provider)
-                : self::lookupRfc8484($host, $type, $provider);
-        } catch (\Throwable) {
-            fail('DNS lookup failed. Try again or switch provider.', 502, 'dns', 'LOOKUP_FAILED');
+        foreach ($order as $provider) {
+            try {
+                ok('dns', self::lookupJson($host, $type, $provider));
+            } catch (\Throwable) {
+                // Try the next resolver when the caller did not pin a provider.
+            }
         }
 
-        ok('dns', $result);
+        fail('DNS lookup failed. Try again shortly.', 502, 'dns', 'LOOKUP_FAILED');
     }
 
     /**
@@ -47,13 +61,14 @@ final class DnsService
      */
     private static function lookupJson(string $host, string $type, string $provider): array
     {
-        $query = 'https://cloudflare-dns.com/dns-query?' . http_build_query([
+        $spec = self::PROVIDERS[$provider];
+        $query = $spec['url'] . '?' . http_build_query([
             'name' => $host,
             'type' => $type,
         ], '', '&', PHP_QUERY_RFC3986);
 
         $response = app_http_get($query, [
-            'Accept' => 'application/dns-json',
+            'Accept' => $spec['accept'],
         ]);
 
         if (!$response['ok']) {
@@ -90,34 +105,6 @@ final class DnsService
                 }
             }
         }
-
-        return [
-            'provider' => $provider,
-            'host' => $host,
-            'type' => $type,
-            'status' => $status,
-            'status_name' => dns_status_name($status),
-            'answers' => $answers,
-        ];
-    }
-
-    /**
-     * @return array{provider: string, host: string, type: string, status: int, status_name: string, answers: list<array{name: string, type: string, ttl: int, data: string}>}
-     */
-    private static function lookupRfc8484(string $host, string $type, string $provider): array
-    {
-        $wire = DnsMessage::encodeQuery($host, $type);
-        $query = 'https://dns.rajujha.dev/dns-query/tools?dns=' . rawurlencode(DnsMessage::base64url($wire));
-        $response = app_http_get($query, [
-            'Accept' => 'application/dns-message',
-        ]);
-
-        if (!$response['ok'] || $response['body'] === '') {
-            throw new \RuntimeException('RFC 8484 DoH failed');
-        }
-
-        $status = DnsMessage::responseCode($response['body']);
-        $answers = DnsMessage::decodeAnswers($response['body']);
 
         return [
             'provider' => $provider,

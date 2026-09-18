@@ -2221,11 +2221,11 @@
     return ({ 0: 'NOERROR', 1: 'FORMERR', 2: 'SERVFAIL', 3: 'NXDOMAIN', 4: 'NOTIMP', 5: 'REFUSED' })[Number(status)] || ('STATUS_' + status);
   }
 
-  const DNS_TYPES = { A: 1, NS: 2, CNAME: 5, MX: 15, TXT: 16, AAAA: 28 };
   const DNS_ENDPOINTS = {
-    default: { url: 'https://dns.rajujha.dev/dns-query/tools', mode: 'rfc8484' },
-    cloudflare: { url: 'https://cloudflare-dns.com/dns-query', mode: 'json' },
+    cloudflare: { url: 'https://cloudflare-dns.com/dns-query' },
+    google: { url: 'https://dns.google/resolve' },
   };
+  const DNS_ORDER = ['cloudflare', 'google'];
   const DNS_DOH_TIMEOUT_MS = 2500;
   const dnsCache = new Map();
   const dnsInflight = new Map();
@@ -2245,133 +2245,14 @@
     if (code === 'invalid-host') return 'Enter a valid hostname.';
     if (code === 'cors') return 'The DNS provider blocked this browser request.';
     if (code === 'network') return 'The DNS lookup was blocked on this network.';
-    if (code === 'unavailable') return 'The DNS provider is unavailable. Try again or switch provider.';
-    return 'The DNS lookup failed. Try again or switch provider.';
+    if (code === 'unavailable') return 'The DNS lookup is unavailable. Try again shortly.';
+    return 'The DNS lookup failed. Try again shortly.';
   }
 
   function dnsFailure(code) {
     const error = Error(code);
     error.dnsCode = code;
     return error;
-  }
-
-  function dnsBase64Url(bytes) {
-    let binary = '';
-    bytes.forEach((byte) => {
-      binary += String.fromCharCode(byte);
-    });
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-  }
-
-  function encodeDnsQuery(name, type) {
-    const qtype = DNS_TYPES[type] || 1;
-    const id = crypto.getRandomValues(new Uint8Array(2));
-    const labels = String(name).replace(/\.$/, '').split('.').filter(Boolean);
-    const parts = [id[0], id[1], 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
-    for (const label of labels) {
-      const bytes = utf8Encode(label);
-      if (bytes.length < 1 || bytes.length > 63) throw dnsFailure('invalid-host');
-      parts.push(bytes.length, ...bytes);
-    }
-    parts.push(0, (qtype >> 8) & 255, qtype & 255, 0, 1);
-    return Uint8Array.from(parts);
-  }
-
-  function readDnsName(view, offset, depth = 0) {
-    if (depth > 10) throw dnsFailure('unavailable');
-    const labels = [];
-    let jumped = false;
-    let returnOffset = offset;
-    while (offset < view.byteLength) {
-      const len = view.getUint8(offset);
-      if (len === 0) {
-        offset = jumped ? returnOffset : offset + 1;
-        break;
-      }
-      if ((len & 0xc0) === 0xc0) {
-        if (offset + 1 >= view.byteLength) throw dnsFailure('unavailable');
-        const pointer = ((len & 0x3f) << 8) | view.getUint8(offset + 1);
-        if (!jumped) {
-          returnOffset = offset + 2;
-          jumped = true;
-        }
-        offset = pointer;
-        depth += 1;
-        if (depth > 10) throw dnsFailure('unavailable');
-        continue;
-      }
-      offset += 1;
-      let label = '';
-      for (let i = 0; i < len && offset < view.byteLength; i += 1) {
-        label += String.fromCharCode(view.getUint8(offset));
-        offset += 1;
-      }
-      labels.push(label);
-    }
-    return { name: labels.join('.'), offset };
-  }
-
-  function readDnsRdata(view, offset, type, rdlength) {
-    if (type === 1 && rdlength === 4) {
-      return [view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3)].join('.');
-    }
-    if (type === 28 && rdlength === 16) {
-      const parts = [];
-      for (let i = 0; i < 8; i += 1) parts.push(view.getUint16(offset + i * 2).toString(16));
-      return parts.join(':');
-    }
-    if (type === 15 && rdlength >= 3) {
-      const preference = view.getUint16(offset);
-      const exchange = readDnsName(view, offset + 2).name;
-      return preference + ' ' + exchange;
-    }
-    if (type === 16) {
-      let out = '';
-      let i = 0;
-      while (i < rdlength) {
-        const size = view.getUint8(offset + i);
-        i += 1;
-        for (let j = 0; j < size && i < rdlength; j += 1, i += 1) {
-          out += String.fromCharCode(view.getUint8(offset + i));
-        }
-      }
-      return out;
-    }
-    if (type === 2 || type === 5) {
-      return readDnsName(view, offset).name;
-    }
-    return '';
-  }
-
-  function parseDnsMessage(buffer) {
-    const view = new DataView(buffer);
-    if (view.byteLength < 12) throw dnsFailure('unavailable');
-    const status = view.getUint16(2) & 0x0f;
-    const qdcount = view.getUint16(4);
-    const ancount = view.getUint16(6);
-    let offset = 12;
-    for (let i = 0; i < qdcount; i += 1) {
-      offset = readDnsName(view, offset).offset + 4;
-    }
-    const answers = [];
-    for (let i = 0; i < ancount && answers.length < 8; i += 1) {
-      const name = readDnsName(view, offset);
-      offset = name.offset;
-      if (offset + 10 > view.byteLength) break;
-      const type = view.getUint16(offset);
-      const ttl = view.getUint32(offset + 4);
-      const rdlength = view.getUint16(offset + 8);
-      offset += 10;
-      const data = readDnsRdata(view, offset, type, rdlength);
-      offset += rdlength;
-      answers.push({
-        name: name.name,
-        type: dnsTypeName(type),
-        ttl,
-        data,
-      });
-    }
-    return { status, answers };
   }
 
   function normalizeDoh(decoded, host, type, provider) {
@@ -2452,12 +2333,12 @@
     };
   }
 
-  async function dohFetch(url, accept, parentSignal) {
+  async function dohFetch(url, parentSignal) {
     const timed = withDnsTimeout(parentSignal, DNS_DOH_TIMEOUT_MS);
     try {
       return await fetch(url, {
         method: 'GET',
-        headers: { Accept: accept },
+        headers: { Accept: 'application/dns-json' },
         mode: 'cors',
         credentials: 'omit',
         cache: 'no-store',
@@ -2475,55 +2356,31 @@
     const spec = DNS_ENDPOINTS[provider];
     if (!spec) throw dnsFailure('unavailable');
     const normalizedHost = host.replace(/\.$/, '');
-    if (spec.mode === 'json') {
-      const url = spec.url + '?' + new URLSearchParams({ name: normalizedHost, type });
-      const response = await dohFetch(url, 'application/dns-json', signal);
-      if (!response.ok) throw dnsFailure('unavailable');
-      let decoded;
-      try {
-        decoded = await response.json();
-      } catch {
-        throw dnsFailure('unavailable');
-      }
-      if (!decoded || typeof decoded !== 'object') throw dnsFailure('unavailable');
-      return publicDnsResult(normalizeDoh(decoded, normalizedHost, type, provider), normalizedHost, type);
-    }
-
-    const query = encodeDnsQuery(normalizedHost, type);
-    const url = spec.url + '?dns=' + dnsBase64Url(query);
-    const response = await dohFetch(url, 'application/dns-message', signal);
+    const url = spec.url + '?' + new URLSearchParams({ name: normalizedHost, type });
+    const response = await dohFetch(url, signal);
     if (!response.ok) throw dnsFailure('unavailable');
-    const buffer = await response.arrayBuffer();
-    let parsed;
+    let decoded;
     try {
-      parsed = parseDnsMessage(buffer);
-    } catch (error) {
-      throw classifyDnsFetchError(error, signal);
+      decoded = await response.json();
+    } catch {
+      throw dnsFailure('unavailable');
     }
-    return publicDnsResult({
-      provider,
-      host: normalizedHost,
-      type,
-      status: parsed.status,
-      status_name: dnsStatusName(parsed.status),
-      answers: parsed.answers,
-    }, normalizedHost, type);
+    if (!decoded || typeof decoded !== 'object') throw dnsFailure('unavailable');
+    return publicDnsResult(normalizeDoh(decoded, normalizedHost, type, provider), normalizedHost, type);
   }
 
-  async function lookupDnsBrowserFirst(host, type, provider, signal) {
-    const key = provider + '|' + host + '|' + type;
+  async function lookupDnsBrowserFirst(host, type, signal) {
+    const key = host + '|' + type;
     if (dnsCache.has(key)) return dnsCache.get(key);
     if (dnsInflight.has(key)) return dnsInflight.get(key);
 
-    const order = provider === 'cloudflare' ? ['cloudflare', 'default'] : ['default', 'cloudflare'];
     const pending = (async () => {
       let lastError = dnsFailure('unavailable');
-      for (const candidate of order) {
+      for (const candidate of DNS_ORDER) {
         if (dnsCorsBlocked.has(candidate)) continue;
         try {
           const data = await fetchDoh(candidate, host, type, signal);
           dnsCache.set(key, data);
-          dnsCache.set(candidate + '|' + host + '|' + type, data);
           return data;
         } catch (error) {
           if (error && error.name === 'AbortError' && signal && signal.aborted) throw error;
@@ -2534,7 +2391,7 @@
         }
       }
       try {
-        const response = await api({ tool: 'dns', host, type, provider }, 'GET', signal);
+        const response = await api({ tool: 'dns', host, type }, 'GET', signal);
         const data = publicDnsResult(response.data || {}, host, type);
         dnsCache.set(key, data);
         return data;
@@ -2575,7 +2432,6 @@
       const button = $('#run');
       const host = ($('#dnsHost')?.value || '').trim();
       const type = $('#dnsType')?.value || 'A';
-      const provider = $('#dnsProvider')?.value || 'default';
       controller?.abort();
       controller = new AbortController();
       const signal = controller.signal;
@@ -2583,7 +2439,7 @@
       try {
         if (!host) throw dnsFailure('invalid-host');
         if (!validDnsHost(host)) throw dnsFailure('invalid-host');
-        const data = await lookupDnsBrowserFirst(host, type, provider, signal);
+        const data = await lookupDnsBrowserFirst(host, type, signal);
         const display = publicDnsResult(data, host, type);
         const answers = display.answers;
         cards.replaceChildren();
@@ -2625,7 +2481,7 @@
     };
 
     $('#run').onclick = run;
-    bindSubmit(run, ['#dnsHost', '#dnsType', '#dnsProvider']);
+    bindSubmit(run, ['#dnsHost', '#dnsType']);
     $('#copy').onclick = () => copyText($('#output').textContent, $('#copy'));
   }
 

@@ -44,7 +44,7 @@ PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tool
 ## Privacy and security
 
 - Output is escaped in PHP. Markdown allows only safe `http(s)` links
-- CSP is same-origin except DNS-over-HTTPS (`dns.rajujha.dev`, `cloudflare-dns.com`); no third-party scripts or analytics
+- CSP is same-origin except DNS-over-HTTPS (`cloudflare-dns.com`, `dns.google`); no third-party scripts or analytics
 - Sensitive APIs (`hash`, `hash-validation`, `base64`, `encryption`) accept GET and POST. Prefer POST — secrets and plaintext in GET URLs can be logged or cached
 - Encrypt-Decrypt runs locally in the browser when Web Crypto is available; the UI does not silently fall back to the API
 - bcrypt and encryption iteration ceilings come from `config.json`
@@ -116,15 +116,13 @@ Content-Type: application/json
 
 ### DNS lookup
 
-The UI queries DNS-over-HTTPS in the browser first, then retries the other provider, then this API. Cloudflare uses JSON DoH (`GET` + `Accept: application/dns-json`). The default provider (`https://dns.rajujha.dev/dns-query/tools`) uses RFC 8484 (`GET ?dns=` + `Accept: application/dns-message`). Binary answers are decoded in the browser; the JSON shown matches this API (`provider`, `host`, `type`, `status`, `status_name`, `answers`). A missing CORS header is treated as a blocked browser request and is never shown as a raw fetch error.
-
-On localhost the default AdGuard endpoint typically has no `Access-Control-Allow-Origin` for `http://127.0.0.1`, so the browser retries Cloudflare, then `/api/dns`. After a CORS failure, that provider is skipped for the rest of the tab session.
+The UI has no provider picker. The browser queries JSON DNS-over-HTTPS in this order: Cloudflare (`https://cloudflare-dns.com/dns-query`), then Google Public DNS (`https://dns.google/resolve`), then `GET /api/dns`. Both public resolvers use `GET` with `Accept: application/dns-json`. The JSON shown matches this API (`provider`, `host`, `type`, `status`, `status_name`, `answers`). A missing CORS header is treated as a blocked browser request and is never shown as a raw fetch error. After a CORS failure, that resolver is skipped for the rest of the tab session.
 
 ```text
-GET /api/dns?host=example.com&type=A&provider=default
+GET /api/dns?host=example.com&type=A
 ```
 
-`provider` is `default` (`https://dns.rajujha.dev/dns-query/tools`) or `cloudflare`. `type` is `A`, `AAAA`, `MX`, `TXT`, `CNAME`, or `NS`. Answers are capped at 8 records.
+`provider` is optional: omit it to try Cloudflare then Google, or set `cloudflare` or `google`. `type` is `A`, `AAAA`, `MX`, `TXT`, `CNAME`, or `NS`. Answers are capped at 8 records.
 
 ### SSH keys
 
@@ -191,20 +189,6 @@ Runtime: PHP 8.1+ with `mod_rewrite` and OpenSSL. Keep `APP_DEBUG` unset. Serve 
 Upload `index.php`, `api.php`, `bootstrap.php`, `app/`, `config.json`, compiled assets (including `regex-worker.js` and vendored QR files), `.htaccess`, and static site files. Do not upload `node_modules/`, `tests/`, or `.github/`. Allow the process user to create `var/rate-limit/` (0700). Keep `/app/` blocked from the web server.
 
 Optional: `APP_RATE_LIMIT_DIR` overrides the rate-limit directory. `client_ip.trust_cloudflare` in `config.json` must stay `false` unless the origin accepts traffic only from Cloudflare.
-
-### AdGuard Home DNS-over-HTTPS CORS
-
-The DNS tool’s default provider is `https://dns.rajujha.dev/dns-query/tools`. Browser DoH from `https://tools.rajujha.dev` needs CORS on that endpoint. Add:
-
-```http
-Access-Control-Allow-Origin: https://tools.rajujha.dev
-Access-Control-Allow-Methods: GET, OPTIONS
-Access-Control-Allow-Headers: Accept
-```
-
-A wildcard `Access-Control-Allow-Origin: *` is safe on this DoH endpoint only if it is a public resolver, requests are credential-less (`GET` without cookies), and no authenticated client identity is exposed in the response. Prefer the explicit origin above.
-
-Until those headers are present, browsers on localhost and any non-allowed origin will fail CORS, then automatically use Cloudflare DoH and `/api/dns`. The API talks to AdGuard from the server, so it does not need CORS.
 
 ## Testing
 
