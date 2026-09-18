@@ -2,8 +2,9 @@
 
 @source "../index.php";
 @source "../bootstrap.php";
+@source "../app/**/*.php";
 @source "../assets/app.js";
-@source inline("absolute right-2 top-2 z-10 justify-end ml-auto pl-4 pr-12 pt-11");
+@source inline("absolute right-2 top-2 z-10 justify-end ml-auto pl-4 pr-14 pt-14 is-loading");
 
 @theme {
   --font-sans: "Segoe UI", system-ui, ui-sans-serif, sans-serif;
@@ -69,6 +70,12 @@
     }
     to {
       opacity: 1;
+    }
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
     }
   }
 }
@@ -145,5 +152,27 @@
 
   .markdown-preview :not(pre) > code {
     @apply rounded-md bg-moss px-1.5 py-0.5;
+  }
+
+  button.is-loading {
+    @apply gap-2;
+  }
+
+  button.is-loading::after {
+    content: "";
+    width: 0.85rem;
+    height: 0.85rem;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 999px;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    button.is-loading::after {
+      animation: none;
+      opacity: 0.45;
+    }
   }
 }

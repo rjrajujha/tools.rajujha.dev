@@ -7,7 +7,7 @@ RewriteEngine On
 
 # Local-only front controller and non-public project files.
 RewriteRule ^(?:router|bootstrap)\.php$ - [F,L,NC]
-RewriteRule ^(?:\.git|\.env|composer\.(?:json|lock)|package(?:-lock)?\.json|config\.json|README\.md|LICENSE|src)(?:/|$) - [F,L,NC]
+RewriteRule ^(?:\.git|\.env|composer\.(?:json|lock)|package(?:-lock)?\.json|config\.json|README\.md|LICENSE|src|app)(?:/|$) - [F,L,NC]
 RewriteRule ^(?:node_modules|var|tests|\.github)(?:/|$) - [F,L,NC]
 
 <FilesMatch "^(?:\.htaccess|\.gitignore|config\.json|.*\.bak|.*\.log)$">
@@ -15,9 +15,9 @@ RewriteRule ^(?:node_modules|var|tests|\.github)(?:/|$) - [F,L,NC]
 </FilesMatch>
 
 RewriteRule ^health/?$ /index.php?__route=health [L,QSA]
-RewriteRule ^api/(password|hash|timestamp|uuid|base64|user-agent|ip|secret|encryption)/?$ /api.php?tool=$1 [QSA,L,NC]
+RewriteRule ^api/(password|hash|timestamp|uuid|base64|user-agent|ip|secret|encryption|hash-validation|dns|ssh)/?$ /api.php?tool=$1 [QSA,L,NC]
 RewriteRule ^/?$ /index.php [L]
-RewriteRule ^(password|hash|timestamp|json|uuid|qr|regex|base64|jwt|user-agent|markdown|ip|secret|encryption)/?$ /index.php [QSA,L]
+RewriteRule ^(password|hash|timestamp|json|uuid|qr|regex|base64|jwt|user-agent|markdown|ip|secret|encryption|hash-validation|cron|ssh|dns)/?$ /index.php [QSA,L]
 
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
@@ -33,7 +33,7 @@ RewriteRule ^ /index.php [L]
   Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
   Header always set Cross-Origin-Opener-Policy "same-origin"
   Header always set Cross-Origin-Resource-Policy "same-origin"
-  Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
+  Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; connect-src 'self' https://dns.rajujha.dev https://cloudflare-dns.com; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
   Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" env=HTTPS
 
   <FilesMatch "\.(?:css|js)$">

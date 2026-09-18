@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -13,8 +16,9 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.1'
-          extensions: openssl
+          extensions: openssl, sodium, curl
           coverage: none
+          ini-values: error_reporting=E_ALL, display_errors=On
 
       - uses: actions/setup-node@v4
         with:
@@ -23,20 +27,24 @@ jobs:
 
       - name: PHP syntax
         run: |
+          set -euo pipefail
           php -l bootstrap.php
           php -l index.php
           php -l api.php
           php -l router.php
           php -l tests/run.php
           php -l tests/http.php
+          find app -name '*.php' -exec php -l {} \;
 
       - name: JavaScript syntax
         run: |
+          set -euo pipefail
           node --check assets/app.js
           node --check assets/regex-worker.js
 
       - name: Install and build CSS
         run: |
+          set -euo pipefail
           npm ci
           npm run build
 
@@ -51,13 +59,25 @@ jobs:
           APP_RATE_LIMIT_DIR: ${{ runner.temp }}/rate-limit
           BASE_URL: http://127.0.0.1:8080
         run: |
+          set -euo pipefail
           mkdir -p "$APP_RATE_LIMIT_DIR"
           php -S 127.0.0.1:8080 router.php >/tmp/php-server.log 2>&1 &
-          trap 'kill %1 || true' EXIT
-          for i in $(seq 1 30); do
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          ready=0
+          for i in $(seq 1 50); do
             if curl -sf http://127.0.0.1:8080/health >/dev/null; then
+              ready=1
               break
             fi
             sleep 0.2
           done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "PHP test server failed to become ready"
+            cat /tmp/php-server.log
+            exit 1
+          fi
+
           php tests/http.php

@@ -8,7 +8,7 @@ PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tool
 
 - Clean URLs for every utility
 - Browser-first processing whenever it is safe
-- JSON APIs for scripting (GET on all endpoints; POST also for hash, base64, and encryption)
+- JSON APIs for scripting (GET on all endpoints; POST also for hash, hash-validation, base64, encryption, and SSH)
 - No cookies, accounts, localStorage, sessionStorage, or analytics
 - Security headers, CSP, and blocked access to sensitive files
 - Application rate limiting on expensive APIs (20 requests / 60 seconds by default)
@@ -32,12 +32,20 @@ PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tool
 | IP Checker | `/ip` | Server-observed `REMOTE_ADDR` | `GET /api/ip` |
 | Secret Generator | `/secret` | Browser Web Crypto + optional API | `GET /api/secret` |
 | Encrypt-Decrypt | `/encryption` | Browser Web Crypto only in the UI | `GET` / `POST /api/encryption` |
+| Hash Validation | `/hash-validation` | Browser for SHA/MD5; API for bcrypt | `GET` / `POST /api/hash-validation` |
+| Cron Expression Builder | `/cron` | Browser only | — |
+| SSH Key Generator | `/ssh` | Browser Web Crypto; API fallback for passphrases | `GET` / `POST /api/ssh` |
+| DNS Lookup | `/dns` | Browser DoH first; API fallback | `GET /api/dns` |
+
+## Architecture
+
+`index.php` and `api.php` are thin entry points. Routes, catalog, controllers, services, views, and shared helpers live under `app/`. Public URLs and the JSON envelope (`ok`, `tool`, `data`, `error`) are unchanged.
 
 ## Privacy and security
 
 - Output is escaped in PHP. Markdown allows only safe `http(s)` links
-- CSP is same-origin; no third-party scripts or analytics
-- Sensitive APIs (`hash`, `base64`, `encryption`) accept GET and POST. Prefer POST — secrets and plaintext in GET URLs can be logged or cached
+- CSP is same-origin except DNS-over-HTTPS (`dns.rajujha.dev`, `cloudflare-dns.com`); no third-party scripts or analytics
+- Sensitive APIs (`hash`, `hash-validation`, `base64`, `encryption`) accept GET and POST. Prefer POST — secrets and plaintext in GET URLs can be logged or cached
 - Encrypt-Decrypt runs locally in the browser when Web Crypto is available; the UI does not silently fall back to the API
 - bcrypt and encryption iteration ceilings come from `config.json`
 - Application rate limiting protects expensive endpoints; identity uses `REMOTE_ADDR` (hashed on disk). Proxy headers are not trusted by default. Set `client_ip.trust_cloudflare` only when the origin accepts traffic exclusively from Cloudflare
@@ -87,11 +95,49 @@ Failure:
 }
 ```
 
-Sensitive endpoints (`/api/hash`, `/api/base64`, `/api/encryption`) accept GET and POST. Prefer POST for secrets — GET query strings can be logged or cached. Request bodies and string inputs are limited to 65,536 bytes.
+Sensitive endpoints (`/api/hash`, `/api/hash-validation`, `/api/base64`, `/api/encryption`) accept GET and POST. Prefer POST for secrets — GET query strings can be logged or cached. Request bodies and string inputs are limited to 65,536 bytes.
 
-Safe GET examples: `/api/password`, `/api/uuid`, `/api/secret`, `/api/timestamp`, `/api/ip`, `/api/user-agent`.
+Safe GET examples: `/api/password`, `/api/uuid`, `/api/secret`, `/api/timestamp`, `/api/ip`, `/api/user-agent`, `/api/dns`, `/api/ssh` without a passphrase. Passphrase-protected SSH keys require POST.
 
 `GET /health` returns UTC status JSON and is not cacheable.
+
+### Hash validation
+
+```text
+GET /api/hash-validation?str=admin123&hash=240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9&algorithm=sha256
+
+POST /api/hash-validation
+Content-Type: application/json
+
+{"str":"admin123","hash":"240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9","algorithm":"sha256"}
+```
+
+`algorithm` is `auto`, `sha256`, `sha384`, `sha512`, `sha1`, `md5`, or `bcrypt`. Auto detects bcrypt, then hex length. Response `data.match` is boolean.
+
+### DNS lookup
+
+The UI queries DNS-over-HTTPS in the browser first, then retries the other provider, then this API. Cloudflare uses JSON DoH (`GET` + `Accept: application/dns-json`). The default provider (`https://dns.rajujha.dev/dns-query/tools`) uses RFC 8484 (`GET ?dns=` + `Accept: application/dns-message`). Binary answers are decoded in the browser; the JSON shown matches this API (`provider`, `host`, `type`, `status`, `status_name`, `answers`). A missing CORS header is treated as a blocked browser request and is never shown as a raw fetch error.
+
+On localhost the default AdGuard endpoint typically has no `Access-Control-Allow-Origin` for `http://127.0.0.1`, so the browser retries Cloudflare, then `/api/dns`. After a CORS failure, that provider is skipped for the rest of the tab session.
+
+```text
+GET /api/dns?host=example.com&type=A&provider=default
+```
+
+`provider` is `default` (`https://dns.rajujha.dev/dns-query/tools`) or `cloudflare`. `type` is `A`, `AAAA`, `MX`, `TXT`, `CNAME`, or `NS`. Answers are capped at 8 records.
+
+### SSH keys
+
+```text
+GET /api/ssh?algorithm=ed25519
+
+POST /api/ssh
+Content-Type: application/json
+
+{"algorithm":"ed25519","comment":"laptop","passphrase":"optional"}
+```
+
+`algorithm` is `ed25519`, `rsa2048`, or `rsa4096`. The UI generates keys in the browser when Web Crypto supports the algorithm. A passphrase uses POST so the private key can be encrypted with OpenSSH `aes256-ctr` / `bcrypt`. Keys and passphrases are never stored.
 
 ### Encryption
 
@@ -140,9 +186,25 @@ V1 payloads remain decryptable for compatibility. New `v=1` encrypts omit AAD an
 
 ## Deployment
 
-Runtime: PHP 8.1+ with `mod_rewrite` and OpenSSL. Keep `APP_DEBUG` unset. Serve over HTTPS (Web Crypto needs a secure context).
+Runtime: PHP 8.1+ with `mod_rewrite` and OpenSSL. Keep `APP_DEBUG` unset. Serve over HTTPS (Web Crypto needs a secure context). Enable OPcache when available.
 
-Upload `index.php`, `api.php`, `bootstrap.php`, `config.json`, compiled assets (including `regex-worker.js` and vendored QR files), `.htaccess`, and static site files. Do not upload `node_modules/`, `tests/`, or `.github/`. Allow the process user to create `var/rate-limit/` (0700). Enable OPcache when available.
+Upload `index.php`, `api.php`, `bootstrap.php`, `app/`, `config.json`, compiled assets (including `regex-worker.js` and vendored QR files), `.htaccess`, and static site files. Do not upload `node_modules/`, `tests/`, or `.github/`. Allow the process user to create `var/rate-limit/` (0700). Keep `/app/` blocked from the web server.
+
+Optional: `APP_RATE_LIMIT_DIR` overrides the rate-limit directory. `client_ip.trust_cloudflare` in `config.json` must stay `false` unless the origin accepts traffic only from Cloudflare.
+
+### AdGuard Home DNS-over-HTTPS CORS
+
+The DNS tool’s default provider is `https://dns.rajujha.dev/dns-query/tools`. Browser DoH from `https://tools.rajujha.dev` needs CORS on that endpoint. Add:
+
+```http
+Access-Control-Allow-Origin: https://tools.rajujha.dev
+Access-Control-Allow-Methods: GET, OPTIONS
+Access-Control-Allow-Headers: Accept
+```
+
+A wildcard `Access-Control-Allow-Origin: *` is safe on this DoH endpoint only if it is a public resolver, requests are credential-less (`GET` without cookies), and no authenticated client identity is exposed in the response. Prefer the explicit origin above.
+
+Until those headers are present, browsers on localhost and any non-allowed origin will fail CORS, then automatically use Cloudflare DoH and `/api/dns`. The API talks to AdGuard from the server, so it does not need CORS.
 
 ## Testing
 
@@ -151,6 +213,7 @@ php -l bootstrap.php
 php -l index.php
 php -l api.php
 php -l router.php
+find app -name '*.php' -exec php -l {} \;
 node --check assets/app.js
 npm run build
 php tests/run.php

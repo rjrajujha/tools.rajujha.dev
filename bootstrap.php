@@ -8,6 +8,8 @@ if (defined('APP_BOOTSTRAPPED')) {
 define('APP_BOOTSTRAPPED', true);
 define('APP_ROOT', __DIR__);
 
+require_once APP_ROOT . '/app/autoload.php';
+
 /**
  * Default debug flag. Override with APP_DEBUG=1 in the server environment.
  * Keep this false in production.
@@ -76,7 +78,7 @@ function app_config_defaults(): array
 {
     return [
         'author' => 'Raju Jha',
-        'version' => '1.1.0',
+        'version' => '1.1.2',
         'security' => [
             'bcrypt_cost' => 12,
             'max_bcrypt_cost' => 14,
@@ -273,7 +275,8 @@ function app_send_security_headers(): void
     header('Cross-Origin-Resource-Policy: same-origin');
     header(
         "Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; "
-        . "script-src 'self'; worker-src 'self'; connect-src 'self'; object-src 'none'; "
+        . "script-src 'self'; worker-src 'self'; "
+        . "connect-src 'self' https://dns.rajujha.dev https://cloudflare-dns.com; object-src 'none'; "
         . "base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
     );
     header_remove('X-Powered-By');

@@ -31,7 +31,7 @@ $blockedExact = [
     '/license',
 ];
 
-$blockedPrefix = ['/.git', '/src/', '/node_modules/', '/.env', '/var/', '/tests/', '/.github/'];
+$blockedPrefix = ['/.git', '/src/', '/app/', '/node_modules/', '/.env', '/var/', '/tests/', '/.github/'];
 
 if (in_array($normalized, $blockedExact, true)) {
     require_once __DIR__ . '/bootstrap.php';
@@ -57,7 +57,7 @@ if (preg_match('#^/health/?$#i', $uri)) {
     health_response();
 }
 
-if (preg_match('#^/api/(password|hash|timestamp|uuid|base64|user-agent|ip|secret|encryption)/?$#i', $uri, $match)) {
+if (preg_match('#^/api/(password|hash|timestamp|uuid|base64|user-agent|ip|secret|encryption|hash-validation|dns|ssh)/?$#i', $uri, $match)) {
     $_GET['tool'] = strtolower($match[1]);
     require __DIR__ . '/api.php';
     return true;

@@ -76,11 +76,15 @@
     showToast('Copied');
     if (!button) return;
 
+    button.setAttribute('aria-live', 'polite');
     if (button.dataset.copyMode === 'icon') {
+      const previous = button.getAttribute('aria-label') || 'Copy';
+      button.setAttribute('aria-label', 'Copied');
       button.classList.add('border-leaf/50', 'bg-moss', 'text-ink');
       window.setTimeout(() => {
+        button.setAttribute('aria-label', previous);
         button.classList.remove('border-leaf/50', 'bg-moss', 'text-ink');
-      }, 900);
+      }, 1200);
       return;
     }
 
@@ -91,7 +95,7 @@
     window.setTimeout(() => {
       button.textContent = original;
       button.classList.remove('border-leaf/50', 'bg-moss', 'text-ink');
-    }, 900);
+    }, 1200);
   }
 
   function setResult(el, value) {
@@ -117,6 +121,8 @@
 
   function setBusy(button, busy, label = 'Working…') {
     if (!button) return;
+    button.setAttribute('aria-busy', busy ? 'true' : 'false');
+    button.classList.toggle('is-loading', Boolean(busy));
     if (busy) {
       button.dataset.label = button.dataset.label || button.textContent;
       button.disabled = true;
@@ -160,6 +166,123 @@
 
   function hex(bytes) {
     return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  function md5Hex(value) {
+    return md5Bytes(utf8Encode(value));
+  }
+
+  function md5Bytes(bytes) {
+    const toHex = (num) => {
+      const alphabet = '0123456789abcdef';
+      let out = '';
+      for (let i = 0; i < 4; i += 1) {
+        out += alphabet[(num >> (i * 8 + 4)) & 15] + alphabet[(num >> (i * 8)) & 15];
+      }
+      return out;
+    };
+    const add32 = (a, b) => (a + b) | 0;
+    const cmn = (q, a, b, x, s, t) => {
+      a = add32(add32(a, q), add32(x, t));
+      return add32((a << s) | (a >>> (32 - s)), b);
+    };
+    const ff = (a, b, c, d, x, s, t) => cmn((b & c) | (~b & d), a, b, x, s, t);
+    const gg = (a, b, c, d, x, s, t) => cmn((b & d) | (c & ~d), a, b, x, s, t);
+    const hh = (a, b, c, d, x, s, t) => cmn(b ^ c ^ d, a, b, x, s, t);
+    const ii = (a, b, c, d, x, s, t) => cmn(c ^ (b | ~d), a, b, x, s, t);
+
+    const n = bytes.length;
+    const words = [];
+    for (let i = 0; i < n; i += 1) {
+      words[i >> 2] = (words[i >> 2] || 0) | (bytes[i] << ((i % 4) * 8));
+    }
+    words[n >> 2] |= 0x80 << ((n % 4) * 8);
+    const padded = (((n + 8) >> 6) + 1) * 16;
+    while (words.length < padded) words.push(0);
+    words[padded - 2] = (n * 8) | 0;
+    words[padded - 1] = Math.floor((n * 8) / 4294967296);
+
+    let a = 1732584193;
+    let b = -271733879;
+    let c = -1732584194;
+    let d = 271733878;
+
+    for (let i = 0; i < words.length; i += 16) {
+      const oa = a;
+      const ob = b;
+      const oc = c;
+      const od = d;
+      a = ff(a, b, c, d, words[i + 0], 7, -680876936);
+      d = ff(d, a, b, c, words[i + 1], 12, -389564586);
+      c = ff(c, d, a, b, words[i + 2], 17, 606105819);
+      b = ff(b, c, d, a, words[i + 3], 22, -1044525330);
+      a = ff(a, b, c, d, words[i + 4], 7, -176418897);
+      d = ff(d, a, b, c, words[i + 5], 12, 1200080426);
+      c = ff(c, d, a, b, words[i + 6], 17, -1473231341);
+      b = ff(b, c, d, a, words[i + 7], 22, -45705983);
+      a = ff(a, b, c, d, words[i + 8], 7, 1770035416);
+      d = ff(d, a, b, c, words[i + 9], 12, -1958414417);
+      c = ff(c, d, a, b, words[i + 10], 17, -42063);
+      b = ff(b, c, d, a, words[i + 11], 22, -1990404162);
+      a = ff(a, b, c, d, words[i + 12], 7, 1804603682);
+      d = ff(d, a, b, c, words[i + 13], 12, -40341101);
+      c = ff(c, d, a, b, words[i + 14], 17, -1502002290);
+      b = ff(b, c, d, a, words[i + 15], 22, 1236535329);
+      a = gg(a, b, c, d, words[i + 1], 5, -165796510);
+      d = gg(d, a, b, c, words[i + 6], 9, -1069501632);
+      c = gg(c, d, a, b, words[i + 11], 14, 643717713);
+      b = gg(b, c, d, a, words[i + 0], 20, -373897302);
+      a = gg(a, b, c, d, words[i + 5], 5, -701558691);
+      d = gg(d, a, b, c, words[i + 10], 9, 38016083);
+      c = gg(c, d, a, b, words[i + 15], 14, -660478335);
+      b = gg(b, c, d, a, words[i + 4], 20, -405537848);
+      a = gg(a, b, c, d, words[i + 9], 5, 568446438);
+      d = gg(d, a, b, c, words[i + 14], 9, -1019803690);
+      c = gg(c, d, a, b, words[i + 3], 14, -187363961);
+      b = gg(b, c, d, a, words[i + 8], 20, 1163531501);
+      a = gg(a, b, c, d, words[i + 13], 5, -1444681467);
+      d = gg(d, a, b, c, words[i + 2], 9, -51403784);
+      c = gg(c, d, a, b, words[i + 7], 14, 1735328473);
+      b = gg(b, c, d, a, words[i + 12], 20, -1926607734);
+      a = hh(a, b, c, d, words[i + 5], 4, -378558);
+      d = hh(d, a, b, c, words[i + 8], 11, -2022574463);
+      c = hh(c, d, a, b, words[i + 11], 16, 1839030562);
+      b = hh(b, c, d, a, words[i + 14], 23, -35309556);
+      a = hh(a, b, c, d, words[i + 1], 4, -1530992060);
+      d = hh(d, a, b, c, words[i + 4], 11, 1272893353);
+      c = hh(c, d, a, b, words[i + 7], 16, -155497632);
+      b = hh(b, c, d, a, words[i + 10], 23, -1094730640);
+      a = hh(a, b, c, d, words[i + 13], 4, 681279174);
+      d = hh(d, a, b, c, words[i + 0], 11, -358537222);
+      c = hh(c, d, a, b, words[i + 3], 16, -722521979);
+      b = hh(b, c, d, a, words[i + 6], 23, 76029189);
+      a = hh(a, b, c, d, words[i + 9], 4, -640364487);
+      d = hh(d, a, b, c, words[i + 12], 11, -421815835);
+      c = hh(c, d, a, b, words[i + 15], 16, 530742520);
+      b = hh(b, c, d, a, words[i + 2], 23, -995338651);
+      a = ii(a, b, c, d, words[i + 0], 6, -198630844);
+      d = ii(d, a, b, c, words[i + 7], 10, 1126891415);
+      c = ii(c, d, a, b, words[i + 14], 15, -1416354905);
+      b = ii(b, c, d, a, words[i + 5], 21, -57434055);
+      a = ii(a, b, c, d, words[i + 12], 6, 1700485571);
+      d = ii(d, a, b, c, words[i + 3], 10, -1894986606);
+      c = ii(c, d, a, b, words[i + 10], 15, -1051523);
+      b = ii(b, c, d, a, words[i + 1], 21, -2054922799);
+      a = ii(a, b, c, d, words[i + 8], 6, 1873313359);
+      d = ii(d, a, b, c, words[i + 15], 10, -30611744);
+      c = ii(c, d, a, b, words[i + 6], 15, -1560198380);
+      b = ii(b, c, d, a, words[i + 13], 21, 1309151649);
+      a = ii(a, b, c, d, words[i + 4], 6, -145523070);
+      d = ii(d, a, b, c, words[i + 11], 10, -1120210379);
+      c = ii(c, d, a, b, words[i + 2], 15, 718787259);
+      b = ii(b, c, d, a, words[i + 9], 21, -343485551);
+      a = add32(a, oa);
+      b = add32(b, ob);
+      c = add32(c, oc);
+      d = add32(d, od);
+    }
+
+    return toHex(a) + toHex(b) + toHex(c) + toHex(d);
   }
 
   function b64(bytes) {
@@ -220,22 +343,25 @@
     );
   }
 
-  async function api(params, method) {
+  async function api(params, method, signal) {
     const tool = String(params.tool || '');
     const resolved = method
-      || (['hash', 'base64', 'encryption'].includes(tool) ? 'POST' : 'GET');
+      || (['hash', 'base64', 'encryption', 'hash-validation'].includes(tool) ? 'POST' : 'GET');
     const post = resolved === 'POST';
+    const path = '/api/' + encodeURIComponent(tool);
     let response;
     try {
-      response = await fetch(post ? '/api.php' : '/api.php?' + new URLSearchParams(params), {
+      response = await fetch(post ? path : path + '?' + new URLSearchParams(params), {
         method: post ? 'POST' : 'GET',
         headers: {
           Accept: 'application/json',
           ...(post ? { 'Content-Type': 'application/json' } : {}),
         },
         body: post ? JSON.stringify(params) : undefined,
+        signal,
       });
-    } catch {
+    } catch (error) {
+      if (error && error.name === 'AbortError') throw error;
       throw Error('Network error. Check your connection and try again.');
     }
 
@@ -565,16 +691,231 @@
     return `<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#ffffff"/>${rects.join('')}</svg>`;
   }
 
+  function wifiEscape(value) {
+    return String(value).replace(/([\\;,:"])/g, '\\$1');
+  }
+
+  function vcardEscape(value) {
+    return String(value).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+  }
+
+  function setFieldError(id, message) {
+    const field = document.getElementById(id);
+    const err = document.querySelector(`[data-error-for="${id}"]`);
+    if (field) {
+      if (message) field.setAttribute('aria-invalid', 'true');
+      else field.removeAttribute('aria-invalid');
+    }
+    if (err) {
+      err.textContent = message || '';
+      err.hidden = !message;
+      err.classList.toggle('font-medium', Boolean(message));
+      err.classList.toggle('text-ink', Boolean(message));
+    }
+  }
+
+  function digitsOnly(value) {
+    return String(value).replace(/\D/g, '');
+  }
+
+  function normalizeUpiPa(value) {
+    return String(value).toLowerCase();
+  }
+
+  function qrPayload() {
+    const type = $('#qrType')?.value || 'text';
+    const errorIds = [
+      'input',
+      'qrFirstName',
+      'qrMailTo',
+      'qrWifiSsid',
+      'qrUpiId',
+      'qrAccount',
+      'qrIfsc',
+      'qrUpiAmount',
+      'qrCcCard',
+      'qrCcMobile',
+      'qrCcLast4',
+    ];
+    for (const id of errorIds) setFieldError(id, '');
+
+    if (type === 'text') {
+      const value = $('#input')?.value || '';
+      if (!value.trim()) {
+        return { ok: false, payload: '', status: 'Enter text to generate' };
+      }
+      return { ok: true, payload: value, status: '' };
+    }
+
+    if (type === 'contact') {
+      const first = ($('#qrFirstName')?.value || '').trim();
+      const last = ($('#qrLastName')?.value || '').trim();
+      const phone = ($('#qrPhone')?.value || '').trim();
+      const email = ($('#qrContactEmail')?.value || '').trim();
+      const url = ($('#qrWebsite')?.value || '').trim();
+      if (!first) {
+        return { ok: false, payload: '', status: 'First name is required' };
+      }
+      const fn = [first, last].filter(Boolean).join(' ');
+      const lines = [
+        'BEGIN:VCARD',
+        'VERSION:3.0',
+        `N:${vcardEscape(last)};${vcardEscape(first)};;;`,
+        `FN:${vcardEscape(fn)}`,
+      ];
+      if (phone) lines.push(`TEL:${vcardEscape(phone)}`);
+      if (email) lines.push(`EMAIL:${vcardEscape(email)}`);
+      if (url) lines.push(`URL:${vcardEscape(url)}`);
+      lines.push('END:VCARD');
+      return { ok: true, payload: lines.join('\n'), status: '' };
+    }
+
+    if (type === 'email') {
+      const email = ($('#qrMailTo')?.value || '').trim();
+      if (!email) {
+        return { ok: false, payload: '', status: 'Email is required' };
+      }
+      if (!email.includes('@') || email.startsWith('@') || email.endsWith('@')) {
+        setFieldError('qrMailTo', 'Enter a valid email address');
+        return { ok: false, payload: '', status: 'Enter a valid email address' };
+      }
+      const subject = ($('#qrSubject')?.value || '').trim();
+      const body = ($('#qrBody')?.value || '').trim();
+      let mailto = 'mailto:' + email;
+      const query = [];
+      if (subject) query.push('subject=' + encodeURIComponent(subject));
+      if (body) query.push('body=' + encodeURIComponent(body));
+      if (query.length) mailto += '?' + query.join('&');
+      return { ok: true, payload: mailto, status: '' };
+    }
+
+    if (type === 'wifi') {
+      const ssid = $('#qrWifiSsid')?.value || '';
+      if (!ssid.trim()) {
+        return { ok: false, payload: '', status: 'SSID is required' };
+      }
+      const security = $('#qrWifiSecurity')?.value || 'WPA';
+      const password = $('#qrWifiPassword')?.value || '';
+      const hidden = Boolean($('#qrWifiHidden')?.checked);
+      let payload = `WIFI:T:${security};S:${wifiEscape(ssid)};`;
+      if (security !== 'nopass') payload += `P:${wifiEscape(password)};`;
+      if (hidden) payload += 'H:true;';
+      payload += ';';
+      return { ok: true, payload, status: '' };
+    }
+
+    if (type === 'upi') {
+      const mode = $('#qrUpiMode')?.value || 'vpa';
+      const name = ($('#qrUpiName')?.value || '').trim();
+      const amount = ($('#qrUpiAmount')?.value || '').trim();
+      if (amount && !/^\d+(?:\.\d{1,2})?$/.test(amount)) {
+        setFieldError('qrUpiAmount', 'Amount supports up to 2 decimal places');
+        return { ok: false, payload: '', status: 'Amount supports up to 2 decimal places' };
+      }
+
+      let pa = '';
+      if (mode === 'account') {
+        const account = ($('#qrAccount')?.value || '').trim();
+        const ifsc = ($('#qrIfsc')?.value || '').trim();
+        let status = '';
+        if (!account) {
+          status = 'Account number is required';
+        }
+        if (!ifsc) {
+          status = status || 'IFSC is required';
+        } else if (!/^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(ifsc)) {
+          setFieldError('qrIfsc', 'Enter an 11-character IFSC');
+          status = status || 'Enter an 11-character IFSC';
+        }
+        if (status) return { ok: false, payload: '', status };
+        pa = `${account}@${ifsc}.ifsc.npci`.toLowerCase();
+      } else {
+        const rawUpi = ($('#qrUpiId')?.value || '').trim();
+        if (!rawUpi) {
+          return { ok: false, payload: '', status: 'UPI ID is required' };
+        }
+        const upi = rawUpi.toLowerCase();
+        if (!upi.includes('@') || upi.split('@').some((part) => part === '') || /\s/.test(upi)) {
+          setFieldError('qrUpiId', 'Enter a valid UPI ID');
+          return { ok: false, payload: '', status: 'Enter a valid UPI ID' };
+        }
+        pa = upi;
+      }
+
+      const parts = [`pa=${pa}`];
+      if (name) parts.push('pn=' + name.replace(/ /g, '%20'));
+      if (amount) parts.push('am=' + amount);
+      return { ok: true, payload: 'upi://pay?' + parts.join('&'), status: '' };
+    }
+
+    if (type === 'ccupi') {
+      const bank = $('#qrCcBank')?.value || 'sbi';
+      const mobileBanks = bank === 'axis' || bank === 'au';
+      if (mobileBanks) {
+        const mobile = digitsOnly($('#qrCcMobile')?.value || '');
+        const last4 = digitsOnly($('#qrCcLast4')?.value || '');
+        let status = '';
+        if (mobile.length === 0) {
+          status = 'Mobile number is required';
+        } else if (mobile.length !== 10) {
+          setFieldError('qrCcMobile', 'Enter a 10-digit mobile number');
+          status = 'Enter a 10-digit mobile number';
+        }
+        if (last4.length === 0) {
+          status = status || 'Last 4 card digits are required';
+        } else if (last4.length !== 4) {
+          setFieldError('qrCcLast4', 'Enter the last 4 card digits');
+          status = status || 'Enter the last 4 card digits';
+        }
+        if (status) return { ok: false, payload: '', status };
+        const pa = bank === 'axis' ? `CC.91${mobile}${last4}@axisbank` : `AUCC${mobile}${last4}@AUBANK`;
+        return { ok: true, payload: `upi://pay?pa=${normalizeUpiPa(pa)}`, status: '' };
+      }
+
+      const card = digitsOnly($('#qrCcCard')?.value || '');
+      const length = bank === 'amex' ? 15 : 16;
+      if (card.length === 0) {
+        return { ok: false, payload: '', status: 'Card number is required' };
+      }
+      if (card.length !== length) {
+        setFieldError('qrCcCard', `Enter a ${length}-digit card number`);
+        return { ok: false, payload: '', status: `Enter a ${length}-digit card number` };
+      }
+      const formats = {
+        sbi: `Sbicard${card}@SBI`,
+        icici: `ccpay${card}@icici`,
+        idfc: `${card}.cc@idfcbank`,
+        amex: `AEBC${card}@SC`,
+      };
+      return { ok: true, payload: `upi://pay?pa=${normalizeUpiPa(formats[bank] || '')}`, status: '' };
+    }
+
+    return { ok: false, payload: '', status: 'Choose a QR type' };
+  }
+
   function initQr() {
     const frame = $('#qr');
     const pngButton = $('#qrDownloadPng');
     const svgButton = $('#qrDownloadSvg');
+    const runButton = $('#run');
+    const statusEl = $('#qrStatus');
     let pngUrl = '';
     let svgText = '';
+    let lastPayload = '';
+
+    const panels = {
+      text: $('#qrPanelText'),
+      contact: $('#qrPanelContact'),
+      email: $('#qrPanelEmail'),
+      wifi: $('#qrPanelWifi'),
+      upi: $('#qrPanelUpi'),
+      ccupi: $('#qrPanelCcupi'),
+    };
 
     const reset = (message) => {
       pngUrl = '';
       svgText = '';
+      lastPayload = '';
       if (pngButton) pngButton.disabled = true;
       if (svgButton) svgButton.disabled = true;
       frame.replaceChildren();
@@ -589,10 +930,34 @@
       link.click();
     };
 
+    const syncPanels = () => {
+      const type = $('#qrType')?.value || 'text';
+      for (const [key, panel] of Object.entries(panels)) {
+        if (panel) panel.hidden = key !== type;
+      }
+      const accountMode = $('#qrUpiMode')?.value === 'account';
+      if ($('#qrUpiVpaFields')) $('#qrUpiVpaFields').hidden = accountMode;
+      if ($('#qrUpiAccountFields')) $('#qrUpiAccountFields').hidden = !accountMode;
+      const bank = $('#qrCcBank')?.value || 'sbi';
+      const mobileBank = bank === 'axis' || bank === 'au';
+      if ($('#qrCcCardFields')) $('#qrCcCardFields').hidden = mobileBank;
+      if ($('#qrCcMobileFields')) $('#qrCcMobileFields').hidden = !mobileBank;
+      if ($('#qrCcCard')) {
+        $('#qrCcCard').placeholder = bank === 'amex' ? '15-digit card number' : '16-digit card number';
+      }
+    };
+
+    const syncValidation = () => {
+      const result = qrPayload();
+      if (runButton) runButton.disabled = !result.ok;
+      if (statusEl) statusEl.textContent = result.ok ? '' : result.status;
+      return result;
+    };
+
     const run = () => {
-      const value = $('#input').value;
-      if (!value.trim()) {
-        reset('Enter text or a URL');
+      const result = syncValidation();
+      if (!result.ok) {
+        reset(result.status || 'Enter the required fields, then generate');
         return;
       }
       if (typeof qrcode !== 'function') {
@@ -601,23 +966,108 @@
       }
 
       const level = $('#qrLevel')?.value || 'M';
+      frame.setAttribute('aria-busy', 'true');
+      frame.classList.add('opacity-70');
       try {
         const qr = qrcode(0, level);
-        qr.addData(value);
+        qr.addData(result.payload);
         qr.make();
         const canvas = qrToCanvas(qr);
         pngUrl = canvas.toDataURL('image/png');
         svgText = qrToSvg(qr);
+        lastPayload = result.payload;
         frame.replaceChildren(canvas);
         if (pngButton) pngButton.disabled = false;
         if (svgButton) svgButton.disabled = false;
       } catch (error) {
         reset(error.message || 'Could not generate a QR code for that input.');
+      } finally {
+        frame.removeAttribute('aria-busy');
+        frame.classList.remove('opacity-70');
       }
     };
 
+    const setChipActive = (button, active) => {
+      button.setAttribute('aria-checked', active ? 'true' : 'false');
+      button.tabIndex = active ? 0 : -1;
+      button.classList.toggle('bg-ink', active);
+      button.classList.toggle('text-white', active);
+      button.classList.toggle('hover:bg-ink/90', active);
+      button.classList.toggle('border', !active);
+      button.classList.toggle('border-line', !active);
+      button.classList.toggle('bg-white', !active);
+      button.classList.toggle('text-ink', !active);
+      button.classList.toggle('hover:border-leaf/50', !active);
+      button.classList.toggle('hover:bg-moss/80', !active);
+    };
+
+    const bindChips = (attr, hiddenId, onSelect) => {
+      const buttons = [...document.querySelectorAll(`[${attr}]`)];
+      const apply = (value, announce) => {
+        const hidden = document.getElementById(hiddenId);
+        if (hidden) hidden.value = value;
+        buttons.forEach((button) => setChipActive(button, button.getAttribute(attr) === value));
+        if (announce) onSelect(value);
+      };
+      buttons.forEach((button) => {
+        button.addEventListener('click', () => apply(button.getAttribute(attr) || '', true));
+      });
+      buttons[0]?.parentElement?.addEventListener('keydown', (event) => {
+        const delta = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+        if (!delta) return;
+        event.preventDefault();
+        const current = buttons.findIndex((button) => button.getAttribute('aria-checked') === 'true');
+        const next = buttons[(Math.max(current, 0) + delta + buttons.length) % buttons.length];
+        next.focus();
+        apply(next.getAttribute(attr) || '', true);
+      });
+    };
+
+    const onFormChange = (event) => {
+      if (event.target && (event.target.id === 'qrType' || event.target.id === 'qrUpiMode' || event.target.id === 'qrCcBank')) {
+        reset('Fill the required fields, then generate');
+      }
+      syncPanels();
+      syncValidation();
+    };
+
+    bindChips('data-qr-type', 'qrType', () => {
+      reset('Fill the required fields, then generate');
+      syncPanels();
+      syncValidation();
+    });
+    bindChips('data-qr-level', 'qrLevel', () => {
+      if (lastPayload && typeof qrcode === 'function') run();
+    });
+
+    const root = $('[data-tool="qr"]');
+    root?.addEventListener('input', onFormChange);
+    root?.addEventListener('change', onFormChange);
     $('#run').onclick = run;
-    bindSubmit(run, ['#input', '#qrLevel']);
+    bindSubmit(run, [
+      '#input',
+      '#qrType',
+      '#qrLevel',
+      '#qrFirstName',
+      '#qrLastName',
+      '#qrPhone',
+      '#qrContactEmail',
+      '#qrWebsite',
+      '#qrMailTo',
+      '#qrSubject',
+      '#qrBody',
+      '#qrWifiSsid',
+      '#qrWifiPassword',
+      '#qrWifiSecurity',
+      '#qrUpiId',
+      '#qrAccount',
+      '#qrIfsc',
+      '#qrUpiName',
+      '#qrUpiAmount',
+      '#qrCcCard',
+      '#qrCcMobile',
+      '#qrCcLast4',
+    ]);
     pngButton?.addEventListener('click', () => {
       if (pngUrl) download(pngUrl, 'qr.png');
     });
@@ -627,6 +1077,8 @@
       download(url, 'qr.svg');
       window.setTimeout(() => URL.revokeObjectURL(url), 1500);
     });
+    syncPanels();
+    syncValidation();
   }
 
   function initRegex() {
@@ -1020,29 +1472,6 @@
   }
 
   function initIp() {
-    const setFamily = (version, value) => {
-      const output = $(`#ipv${version}Output`);
-      const note = $(`#ipv${version}Note`);
-      const card = output.closest('.ip-card');
-
-      if (value) {
-        output.textContent = value;
-        output.classList.remove('text-muted');
-        output.classList.add('text-ink');
-        note.textContent = 'Observed on this connection';
-        card.classList.remove('border-line', 'bg-soft');
-        card.classList.add('border-[#dbe8ce]', 'bg-moss');
-        return;
-      }
-
-      output.textContent = 'Not detected on this connection';
-      output.classList.remove('text-ink');
-      output.classList.add('text-muted');
-      note.textContent = 'This connection did not expose that address family';
-      card.classList.remove('border-[#dbe8ce]', 'bg-moss');
-      card.classList.add('border-line', 'bg-soft');
-    };
-
     const run = async () => {
       const button = $('#run');
       setBusy(button, true, 'Checking…');
@@ -1053,14 +1482,10 @@
         $('#ipVersion').textContent = data.version
           ? `IPv${data.version} detected · server-observed REMOTE_ADDR`
           : 'No valid REMOTE_ADDR on this connection';
-        setFamily(4, data.ipv4);
-        setFamily(6, data.ipv6);
         setResult($('#ipDetails'), JSON.stringify(data, null, 2));
       } catch (error) {
         $('#ipOutput').textContent = 'Error';
         $('#ipVersion').textContent = error.message;
-        setFamily(4, null);
-        setFamily(6, null);
         setResult($('#ipDetails'), error.message);
       } finally {
         setBusy(button, false);
@@ -1385,6 +1810,825 @@
     $('#copyDecrypt')?.addEventListener('click', () => copyText($('#decryptOutput')?.textContent, $('#copyDecrypt')));
   }
 
+  function looksLikeBcrypt(hash) {
+    return /^\$2[abxy]\$\d{2}\$[A-Za-z0-9./]{53}$/.test(String(hash).trim());
+  }
+
+  function detectHashAlgorithm(hash) {
+    const trimmed = String(hash).trim();
+    if (looksLikeBcrypt(trimmed)) return 'bcrypt';
+    const hexValue = trimmed.replace(/^0x/i, '');
+    if (!/^[0-9a-fA-F]+$/.test(hexValue)) return null;
+    switch (hexValue.length) {
+      case 32:
+        return 'md5';
+      case 40:
+        return 'sha1';
+      case 64:
+        return 'sha256';
+      case 96:
+        return 'sha384';
+      case 128:
+        return 'sha512';
+      default:
+        return null;
+    }
+  }
+
+  function normalizeHexHash(hash) {
+    return String(hash).trim().replace(/^0x/i, '').toLowerCase();
+  }
+
+  async function localDigest(value, algorithm) {
+    const names = { sha256: 'SHA-256', sha384: 'SHA-384', sha512: 'SHA-512', sha1: 'SHA-1' };
+    if (algorithm === 'md5') return md5Hex(value);
+    if (!names[algorithm]) throw Error('Unsupported algorithm');
+    if (!canDigest()) {
+      throw Error('This page needs a modern browser so Web Crypto can run locally.');
+    }
+    return digest(value, names[algorithm]);
+  }
+
+  function initHashValidation() {
+    const labels = {
+      auto: 'Auto',
+      sha256: 'SHA-256',
+      sha384: 'SHA-384',
+      sha512: 'SHA-512',
+      sha1: 'SHA-1',
+      md5: 'MD5',
+      bcrypt: 'bcrypt',
+    };
+
+    const run = async () => {
+      const value = $('#input').value;
+      const hashValue = ($('#hashValue')?.value || '').trim();
+      const algorithm = $('#algorithm').value;
+      const button = $('#run');
+      setBusy(button, true, 'Checking…');
+      try {
+        if (!hashValue) throw Error('Hash is required.');
+
+        const detected = algorithm === 'auto' ? detectHashAlgorithm(hashValue) : algorithm;
+        const useServer = algorithm === 'bcrypt' || detected === 'bcrypt';
+        if (useServer) {
+          const response = await api(
+            {
+              tool: 'hash-validation',
+              str: value,
+              hash: hashValue,
+              algorithm,
+            },
+            'POST'
+          );
+          const body = response.data || {};
+          const label = labels[body.algorithm] || body.algorithm || 'bcrypt';
+          setResult(
+            $('#output'),
+            `${body.match ? 'Match' : 'Does Not Match'}\nAlgorithm: ${label}${body.auto ? ' (auto)' : ''}`
+          );
+          return;
+        }
+
+        const candidates = detected ? [detected] : ['sha256', 'sha384', 'sha512', 'sha1', 'md5'];
+        const expected = normalizeHexHash(hashValue);
+        let matched = null;
+        for (const candidate of candidates) {
+          const actual = await localDigest(value, candidate);
+          if (actual === expected) {
+            matched = candidate;
+            break;
+          }
+        }
+        const shown = matched || detected || algorithm;
+        setResult(
+          $('#output'),
+          `${matched ? 'Match' : 'Does Not Match'}\nAlgorithm: ${labels[shown] || shown}${algorithm === 'auto' ? ' (auto)' : ''}`
+        );
+      } catch (error) {
+        setResult($('#output'), error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    };
+
+    $('#run').onclick = run;
+    bindSubmit(run, ['#input', '#hashValue', '#algorithm']);
+    $('#copy').onclick = () => copyText($('#output').textContent);
+  }
+
+  function clampCron(value, min, max, fallback) {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < min || n > max) return fallback;
+    return n;
+  }
+
+  function cronToken(value) {
+    const token = String(value).trim() || '*';
+    return /^[0-9*,\-\/]+$/.test(token) ? token : '*';
+  }
+
+  function pad2(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function weekdayName(value) {
+    return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][Number(value)] || 'Sunday';
+  }
+
+  function describeCron(minute, hour, dom, month, dow) {
+    if (minute === '*' && hour === '*' && dom === '*' && month === '*' && dow === '*') {
+      return 'Every minute';
+    }
+    if (hour === '*' && dom === '*' && month === '*' && dow === '*' && minute !== '*') {
+      return `At minute ${minute} of every hour`;
+    }
+    if (dom === '*' && month === '*' && dow === '*' && minute !== '*' && hour !== '*') {
+      return `At ${pad2(hour)}:${pad2(minute)} every day`;
+    }
+    if (dom === '*' && month === '*' && minute !== '*' && hour !== '*' && dow !== '*') {
+      return `At ${pad2(hour)}:${pad2(minute)} on ${weekdayName(dow)}`;
+    }
+    if (month === '*' && dow === '*' && minute !== '*' && hour !== '*' && dom !== '*') {
+      return `At ${pad2(hour)}:${pad2(minute)} on day ${dom} of every month`;
+    }
+    return `At minute ${minute}, hour ${hour}, day ${dom}, month ${month}, weekday ${dow}`;
+  }
+
+  function initCron() {
+    const panels = {
+      hourly: $('#cronHourly'),
+      daily: $('#cronDaily'),
+      weekly: $('#cronWeekly'),
+      monthly: $('#cronMonthly'),
+      custom: $('#cronCustom'),
+    };
+
+    const render = () => {
+      const mode = $('#cronMode')?.value || 'minute';
+      for (const [key, panel] of Object.entries(panels)) {
+        if (panel) panel.hidden = key !== mode;
+      }
+
+      let minute = '*';
+      let hour = '*';
+      let dom = '*';
+      let month = '*';
+      let dow = '*';
+
+      if (mode === 'hourly') {
+        minute = String(clampCron($('#cronHourlyMinute')?.value, 0, 59, 0));
+      } else if (mode === 'daily') {
+        hour = String(clampCron($('#cronDailyHour')?.value, 0, 23, 0));
+        minute = String(clampCron($('#cronDailyMinute')?.value, 0, 59, 0));
+      } else if (mode === 'weekly') {
+        dow = String(clampCron($('#cronWeeklyDay')?.value, 0, 6, 0));
+        hour = String(clampCron($('#cronWeeklyHour')?.value, 0, 23, 0));
+        minute = String(clampCron($('#cronWeeklyMinute')?.value, 0, 59, 0));
+      } else if (mode === 'monthly') {
+        dom = String(clampCron($('#cronMonthlyDay')?.value, 1, 31, 1));
+        hour = String(clampCron($('#cronMonthlyHour')?.value, 0, 23, 0));
+        minute = String(clampCron($('#cronMonthlyMinute')?.value, 0, 59, 0));
+      } else if (mode === 'custom') {
+        minute = cronToken($('#cronCustomMinute')?.value);
+        hour = cronToken($('#cronCustomHour')?.value);
+        dom = cronToken($('#cronCustomDom')?.value);
+        month = cronToken($('#cronCustomMonth')?.value);
+        dow = cronToken($('#cronCustomDow')?.value);
+      }
+
+      const expression = `${minute} ${hour} ${dom} ${month} ${dow}`;
+      if ($('#cronOutput')) $('#cronOutput').textContent = expression;
+      if ($('#cronHuman')) $('#cronHuman').textContent = describeCron(minute, hour, dom, month, dow);
+    };
+
+    const root = $('[data-tool="cron"]');
+    root?.addEventListener('input', render);
+    root?.addEventListener('change', render);
+    $('#copy').onclick = () => copyText($('#cronOutput')?.textContent);
+    render();
+  }
+
+  function sshString(bytesOrString) {
+    const bytes = typeof bytesOrString === 'string' ? utf8Encode(bytesOrString) : bytesOrString;
+    const out = new Uint8Array(4 + bytes.length);
+    out[0] = (bytes.length >>> 24) & 255;
+    out[1] = (bytes.length >>> 16) & 255;
+    out[2] = (bytes.length >>> 8) & 255;
+    out[3] = bytes.length & 255;
+    out.set(bytes, 4);
+    return out;
+  }
+
+  function sshMpint(bytes) {
+    let value = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let i = 0;
+    while (i < value.length - 1 && value[i] === 0) i += 1;
+    value = value.slice(i);
+    if (value.length === 0) value = new Uint8Array([0]);
+    if (value[0] & 0x80) {
+      const padded = new Uint8Array(value.length + 1);
+      padded.set(value, 1);
+      value = padded;
+    }
+    return sshString(value);
+  }
+
+  function wrapPem(label, bytes) {
+    const encoded = b64(bytes);
+    const lines = encoded.match(/.{1,70}/g) || [encoded];
+    return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----\n`;
+  }
+
+  function opensshPrivateKey(publicBlob, privateBody, comment) {
+    const check = crypto.getRandomValues(new Uint8Array(4));
+    let inner = concatBytes(check, check, privateBody, sshString(comment));
+    const padLen = (8 - (inner.length % 8)) % 8;
+    if (padLen) {
+      const pad = new Uint8Array(padLen);
+      for (let i = 0; i < padLen; i += 1) pad[i] = i + 1;
+      inner = concatBytes(inner, pad);
+    }
+    const payload = concatBytes(
+      utf8Encode('openssh-key-v1\0'),
+      sshString('none'),
+      sshString('none'),
+      sshString(new Uint8Array(0)),
+      new Uint8Array([0, 0, 0, 1]),
+      sshString(publicBlob),
+      sshString(inner)
+    );
+    return wrapPem('OPENSSH PRIVATE KEY', payload);
+  }
+
+  function jwkBytes(jwk, field) {
+    return unb64(String(jwk[field] || ''));
+  }
+
+  async function generateSshEd25519(comment) {
+    const pair = await getSubtle().generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+    const pkcs8 = new Uint8Array(await getSubtle().exportKey('pkcs8', pair.privateKey));
+    let pub;
+    try {
+      pub = new Uint8Array(await getSubtle().exportKey('raw', pair.publicKey));
+    } catch {
+      const spki = new Uint8Array(await getSubtle().exportKey('spki', pair.publicKey));
+      pub = spki.slice(-32);
+    }
+    if (pkcs8.length < 32 || pub.length !== 32) {
+      throw Error('Unexpected Ed25519 key encoding.');
+    }
+    const seed = pkcs8.slice(-32);
+    const secret = concatBytes(seed, pub);
+    const publicBlob = concatBytes(sshString('ssh-ed25519'), sshString(pub));
+    const privateBody = concatBytes(sshString('ssh-ed25519'), sshString(pub), sshString(secret));
+    return {
+      algorithm: 'ed25519',
+      comment,
+      public_key: `ssh-ed25519 ${b64(publicBlob)}${comment ? ' ' + comment : ''}`,
+      private_key: opensshPrivateKey(publicBlob, privateBody, comment),
+    };
+  }
+
+  async function generateSshRsa(bits, comment) {
+    const pair = await getSubtle().generateKey(
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        modulusLength: bits,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: 'SHA-256',
+      },
+      true,
+      ['sign', 'verify']
+    );
+    const jwk = await getSubtle().exportKey('jwk', pair.privateKey);
+    if (!jwk?.n || !jwk?.e || !jwk?.d || !jwk?.p || !jwk?.q || !jwk?.qi) {
+      throw Error('This browser did not export a complete RSA key.');
+    }
+    const n = jwkBytes(jwk, 'n');
+    const e = jwkBytes(jwk, 'e');
+    const d = jwkBytes(jwk, 'd');
+    const p = jwkBytes(jwk, 'p');
+    const q = jwkBytes(jwk, 'q');
+    const qi = jwkBytes(jwk, 'qi');
+    const publicBlob = concatBytes(sshString('ssh-rsa'), sshMpint(e), sshMpint(n));
+    const privateBody = concatBytes(
+      sshString('ssh-rsa'),
+      sshMpint(n),
+      sshMpint(e),
+      sshMpint(d),
+      sshMpint(qi),
+      sshMpint(p),
+      sshMpint(q)
+    );
+    return {
+      algorithm: 'rsa' + bits,
+      comment,
+      public_key: `ssh-rsa ${b64(publicBlob)}${comment ? ' ' + comment : ''}`,
+      private_key: opensshPrivateKey(publicBlob, privateBody, comment),
+    };
+  }
+
+  function downloadText(name, value) {
+    const url = URL.createObjectURL(new Blob([value], { type: 'text/plain' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    link.rel = 'noopener';
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  function initSsh() {
+    const outputs = $('#sshOutputs');
+    const errorBox = $('#sshError');
+
+    const showError = (message) => {
+      if (outputs) outputs.hidden = true;
+      if (errorBox) errorBox.hidden = false;
+      setResult($('#output'), message);
+    };
+
+    const run = async () => {
+      const button = $('#run');
+      const algorithm = $('#sshAlgorithm')?.value || 'ed25519';
+      const comment = ($('#sshComment')?.value || '').replace(/[\r\n]/g, '').slice(0, 100);
+      const passphrase = $('#sshPassphrase')?.value || '';
+      setBusy(button, true, 'Generating…');
+      try {
+        let result;
+        try {
+          if (passphrase) {
+            throw Error('Passphrase-protected keys use the API.');
+          }
+          if (algorithm === 'ed25519') {
+            result = await generateSshEd25519(comment);
+          } else if (algorithm === 'rsa2048' || algorithm === 'rsa4096') {
+            if (!getSubtle()?.generateKey) {
+              throw Error('Web Crypto is unavailable.');
+            }
+            result = await generateSshRsa(algorithm === 'rsa4096' ? 4096 : 2048, comment);
+          } else {
+            throw Error('Unsupported algorithm.');
+          }
+        } catch (error) {
+          const payload = { tool: 'ssh', algorithm, comment };
+          if (passphrase) payload.passphrase = passphrase;
+          const response = await api(payload, passphrase ? 'POST' : 'GET');
+          result = response.data || {};
+          if (!result.public_key || !result.private_key) {
+            throw error;
+          }
+        }
+
+        if (errorBox) errorBox.hidden = true;
+        if (outputs) outputs.hidden = false;
+        setResult($('#sshPublic'), result.public_key || '');
+        setResult($('#sshPrivate'), result.private_key || '');
+        $('#downloadPublic').onclick = () => {
+          downloadText(algorithm === 'ed25519' ? 'id_ed25519.pub' : 'id_rsa.pub', result.public_key || '');
+        };
+        $('#downloadPrivate').onclick = () => {
+          downloadText(algorithm === 'ed25519' ? 'id_ed25519' : 'id_rsa', result.private_key || '');
+        };
+      } catch (error) {
+        showError(error.message || 'Unable to generate an SSH key.');
+      } finally {
+        setBusy(button, false);
+      }
+    };
+
+    $('#run').onclick = run;
+    bindSubmit(run, ['#sshAlgorithm', '#sshComment', '#sshPassphrase']);
+    $('#copyPublic')?.addEventListener('click', () => copyText($('#sshPublic')?.textContent, $('#copyPublic')));
+    $('#copyPrivate')?.addEventListener('click', () => copyText($('#sshPrivate')?.textContent, $('#copyPrivate')));
+    $('#sshPassphraseToggle')?.addEventListener('click', () => {
+      const field = $('#sshPassphrase');
+      const toggle = $('#sshPassphraseToggle');
+      if (!field || !toggle) return;
+      const hidden = field.type === 'password';
+      field.type = hidden ? 'text' : 'password';
+      toggle.textContent = hidden ? 'Hide' : 'Show';
+      toggle.setAttribute('aria-pressed', hidden ? 'true' : 'false');
+    });
+  }
+
+  function dnsTypeName(type) {
+    return ({ 1: 'A', 2: 'NS', 5: 'CNAME', 15: 'MX', 16: 'TXT', 28: 'AAAA' })[Number(type)] || String(type || '');
+  }
+
+  function dnsStatusName(status) {
+    return ({ 0: 'NOERROR', 1: 'FORMERR', 2: 'SERVFAIL', 3: 'NXDOMAIN', 4: 'NOTIMP', 5: 'REFUSED' })[Number(status)] || ('STATUS_' + status);
+  }
+
+  const DNS_TYPES = { A: 1, NS: 2, CNAME: 5, MX: 15, TXT: 16, AAAA: 28 };
+  const DNS_ENDPOINTS = {
+    default: { url: 'https://dns.rajujha.dev/dns-query/tools', mode: 'rfc8484' },
+    cloudflare: { url: 'https://cloudflare-dns.com/dns-query', mode: 'json' },
+  };
+  const DNS_DOH_TIMEOUT_MS = 2500;
+  const dnsCache = new Map();
+  const dnsInflight = new Map();
+  const dnsCorsBlocked = new Set();
+
+  function validDnsHost(host) {
+    const value = String(host || '').trim();
+    if (!value || value.length > 253 || value.includes('://') || /\s/.test(value)) return false;
+    const normalized = value.replace(/\.$/, '');
+    if (!normalized) return false;
+    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(normalized) || normalized.includes(':')) return true;
+    return /^(?=.{1,253}$)(?:[a-zA-Z0-9_](?:[a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?\.)*[a-zA-Z0-9_](?:[a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?$/.test(normalized);
+  }
+
+  function dnsErrorMessage(error) {
+    const code = error && error.dnsCode;
+    if (code === 'invalid-host') return 'Enter a valid hostname.';
+    if (code === 'cors') return 'The DNS provider blocked this browser request.';
+    if (code === 'network') return 'The DNS lookup was blocked on this network.';
+    if (code === 'unavailable') return 'The DNS provider is unavailable. Try again or switch provider.';
+    return 'The DNS lookup failed. Try again or switch provider.';
+  }
+
+  function dnsFailure(code) {
+    const error = Error(code);
+    error.dnsCode = code;
+    return error;
+  }
+
+  function dnsBase64Url(bytes) {
+    let binary = '';
+    bytes.forEach((byte) => {
+      binary += String.fromCharCode(byte);
+    });
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function encodeDnsQuery(name, type) {
+    const qtype = DNS_TYPES[type] || 1;
+    const id = crypto.getRandomValues(new Uint8Array(2));
+    const labels = String(name).replace(/\.$/, '').split('.').filter(Boolean);
+    const parts = [id[0], id[1], 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+    for (const label of labels) {
+      const bytes = utf8Encode(label);
+      if (bytes.length < 1 || bytes.length > 63) throw dnsFailure('invalid-host');
+      parts.push(bytes.length, ...bytes);
+    }
+    parts.push(0, (qtype >> 8) & 255, qtype & 255, 0, 1);
+    return Uint8Array.from(parts);
+  }
+
+  function readDnsName(view, offset, depth = 0) {
+    if (depth > 10) throw dnsFailure('unavailable');
+    const labels = [];
+    let jumped = false;
+    let returnOffset = offset;
+    while (offset < view.byteLength) {
+      const len = view.getUint8(offset);
+      if (len === 0) {
+        offset = jumped ? returnOffset : offset + 1;
+        break;
+      }
+      if ((len & 0xc0) === 0xc0) {
+        if (offset + 1 >= view.byteLength) throw dnsFailure('unavailable');
+        const pointer = ((len & 0x3f) << 8) | view.getUint8(offset + 1);
+        if (!jumped) {
+          returnOffset = offset + 2;
+          jumped = true;
+        }
+        offset = pointer;
+        depth += 1;
+        if (depth > 10) throw dnsFailure('unavailable');
+        continue;
+      }
+      offset += 1;
+      let label = '';
+      for (let i = 0; i < len && offset < view.byteLength; i += 1) {
+        label += String.fromCharCode(view.getUint8(offset));
+        offset += 1;
+      }
+      labels.push(label);
+    }
+    return { name: labels.join('.'), offset };
+  }
+
+  function readDnsRdata(view, offset, type, rdlength) {
+    if (type === 1 && rdlength === 4) {
+      return [view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3)].join('.');
+    }
+    if (type === 28 && rdlength === 16) {
+      const parts = [];
+      for (let i = 0; i < 8; i += 1) parts.push(view.getUint16(offset + i * 2).toString(16));
+      return parts.join(':');
+    }
+    if (type === 15 && rdlength >= 3) {
+      const preference = view.getUint16(offset);
+      const exchange = readDnsName(view, offset + 2).name;
+      return preference + ' ' + exchange;
+    }
+    if (type === 16) {
+      let out = '';
+      let i = 0;
+      while (i < rdlength) {
+        const size = view.getUint8(offset + i);
+        i += 1;
+        for (let j = 0; j < size && i < rdlength; j += 1, i += 1) {
+          out += String.fromCharCode(view.getUint8(offset + i));
+        }
+      }
+      return out;
+    }
+    if (type === 2 || type === 5) {
+      return readDnsName(view, offset).name;
+    }
+    return '';
+  }
+
+  function parseDnsMessage(buffer) {
+    const view = new DataView(buffer);
+    if (view.byteLength < 12) throw dnsFailure('unavailable');
+    const status = view.getUint16(2) & 0x0f;
+    const qdcount = view.getUint16(4);
+    const ancount = view.getUint16(6);
+    let offset = 12;
+    for (let i = 0; i < qdcount; i += 1) {
+      offset = readDnsName(view, offset).offset + 4;
+    }
+    const answers = [];
+    for (let i = 0; i < ancount && answers.length < 8; i += 1) {
+      const name = readDnsName(view, offset);
+      offset = name.offset;
+      if (offset + 10 > view.byteLength) break;
+      const type = view.getUint16(offset);
+      const ttl = view.getUint32(offset + 4);
+      const rdlength = view.getUint16(offset + 8);
+      offset += 10;
+      const data = readDnsRdata(view, offset, type, rdlength);
+      offset += rdlength;
+      answers.push({
+        name: name.name,
+        type: dnsTypeName(type),
+        ttl,
+        data,
+      });
+    }
+    return { status, answers };
+  }
+
+  function normalizeDoh(decoded, host, type, provider) {
+    const answers = [];
+    const raw = Array.isArray(decoded.Answer) ? decoded.Answer : [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      answers.push({
+        name: String(item.name || ''),
+        type: dnsTypeName(item.type) || type,
+        ttl: Number(item.TTL || 0),
+        data: String(item.data || ''),
+      });
+      if (answers.length >= 8) break;
+    }
+    const status = Number(decoded.Status || 0);
+    return {
+      provider,
+      host: String(host || '').replace(/\.$/, ''),
+      type,
+      status,
+      status_name: dnsStatusName(status),
+      answers,
+    };
+  }
+
+  function classifyDnsFetchError(error, parentSignal) {
+    if (error && error.dnsCode) return error;
+    if (error && error.name === 'AbortError') {
+      if (parentSignal && parentSignal.aborted) return error;
+      return dnsFailure('unavailable');
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return dnsFailure('network');
+    return dnsFailure('cors');
+  }
+
+  function withDnsTimeout(parentSignal, ms) {
+    const controller = new AbortController();
+    const onParentAbort = () => controller.abort();
+    if (parentSignal) {
+      if (parentSignal.aborted) {
+        controller.abort();
+      } else {
+        parentSignal.addEventListener('abort', onParentAbort, { once: true });
+      }
+    }
+    const timer = window.setTimeout(() => controller.abort(), ms);
+    return {
+      signal: controller.signal,
+      cleanup() {
+        window.clearTimeout(timer);
+        parentSignal?.removeEventListener('abort', onParentAbort);
+      },
+    };
+  }
+
+  function publicDnsResult(data, fallbackHost, fallbackType) {
+    const answers = [];
+    const raw = Array.isArray(data && data.answers) ? data.answers.slice(0, 8) : [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      answers.push({
+        name: String(item.name || ''),
+        type: String(item.type || fallbackType || ''),
+        ttl: Number(item.ttl || 0),
+        data: String(item.data || ''),
+      });
+      if (answers.length >= 8) break;
+    }
+    const status = Number((data && data.status) || 0);
+    return {
+      provider: String((data && data.provider) || ''),
+      host: String((data && data.host) || fallbackHost || '').replace(/\.$/, ''),
+      type: String((data && data.type) || fallbackType || ''),
+      status,
+      status_name: String((data && data.status_name) || dnsStatusName(status)),
+      answers,
+    };
+  }
+
+  async function dohFetch(url, accept, parentSignal) {
+    const timed = withDnsTimeout(parentSignal, DNS_DOH_TIMEOUT_MS);
+    try {
+      return await fetch(url, {
+        method: 'GET',
+        headers: { Accept: accept },
+        mode: 'cors',
+        credentials: 'omit',
+        cache: 'no-store',
+        redirect: 'error',
+        signal: timed.signal,
+      });
+    } catch (error) {
+      throw classifyDnsFetchError(error, parentSignal);
+    } finally {
+      timed.cleanup();
+    }
+  }
+
+  async function fetchDoh(provider, host, type, signal) {
+    const spec = DNS_ENDPOINTS[provider];
+    if (!spec) throw dnsFailure('unavailable');
+    const normalizedHost = host.replace(/\.$/, '');
+    if (spec.mode === 'json') {
+      const url = spec.url + '?' + new URLSearchParams({ name: normalizedHost, type });
+      const response = await dohFetch(url, 'application/dns-json', signal);
+      if (!response.ok) throw dnsFailure('unavailable');
+      let decoded;
+      try {
+        decoded = await response.json();
+      } catch {
+        throw dnsFailure('unavailable');
+      }
+      if (!decoded || typeof decoded !== 'object') throw dnsFailure('unavailable');
+      return publicDnsResult(normalizeDoh(decoded, normalizedHost, type, provider), normalizedHost, type);
+    }
+
+    const query = encodeDnsQuery(normalizedHost, type);
+    const url = spec.url + '?dns=' + dnsBase64Url(query);
+    const response = await dohFetch(url, 'application/dns-message', signal);
+    if (!response.ok) throw dnsFailure('unavailable');
+    const buffer = await response.arrayBuffer();
+    let parsed;
+    try {
+      parsed = parseDnsMessage(buffer);
+    } catch (error) {
+      throw classifyDnsFetchError(error, signal);
+    }
+    return publicDnsResult({
+      provider,
+      host: normalizedHost,
+      type,
+      status: parsed.status,
+      status_name: dnsStatusName(parsed.status),
+      answers: parsed.answers,
+    }, normalizedHost, type);
+  }
+
+  async function lookupDnsBrowserFirst(host, type, provider, signal) {
+    const key = provider + '|' + host + '|' + type;
+    if (dnsCache.has(key)) return dnsCache.get(key);
+    if (dnsInflight.has(key)) return dnsInflight.get(key);
+
+    const order = provider === 'cloudflare' ? ['cloudflare', 'default'] : ['default', 'cloudflare'];
+    const pending = (async () => {
+      let lastError = dnsFailure('unavailable');
+      for (const candidate of order) {
+        if (dnsCorsBlocked.has(candidate)) continue;
+        try {
+          const data = await fetchDoh(candidate, host, type, signal);
+          dnsCache.set(key, data);
+          dnsCache.set(candidate + '|' + host + '|' + type, data);
+          return data;
+        } catch (error) {
+          if (error && error.name === 'AbortError' && signal && signal.aborted) throw error;
+          const classified = classifyDnsFetchError(error, signal);
+          if (classified && classified.name === 'AbortError') throw classified;
+          if (classified.dnsCode === 'cors') dnsCorsBlocked.add(candidate);
+          lastError = classified;
+        }
+      }
+      try {
+        const response = await api({ tool: 'dns', host, type, provider }, 'GET', signal);
+        const data = publicDnsResult(response.data || {}, host, type);
+        dnsCache.set(key, data);
+        return data;
+      } catch (error) {
+        if (error && error.name === 'AbortError') throw error;
+        throw lastError.dnsCode ? lastError : dnsFailure('unavailable');
+      }
+    })();
+
+    dnsInflight.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      dnsInflight.delete(key);
+    }
+  }
+
+  function initDns() {
+    const cards = $('#dnsCards');
+    let controller = null;
+
+    const showFriendlyError = (message) => {
+      cards.replaceChildren();
+      const empty = document.createElement('div');
+      empty.className = 'w-full min-w-0 overflow-hidden rounded-2xl border border-line bg-soft px-4 py-4 text-left';
+      const caption = document.createElement('span');
+      caption.className = 'mb-1 block text-xs font-bold uppercase tracking-wide text-muted';
+      caption.textContent = 'Lookup failed';
+      const strong = document.createElement('strong');
+      strong.className = 'block min-w-0 break-all whitespace-pre-wrap text-base leading-snug tracking-tight text-ink sm:text-lg';
+      strong.textContent = message;
+      empty.append(caption, strong);
+      cards.append(empty);
+      setResult($('#output'), message);
+    };
+
+    const run = async () => {
+      const button = $('#run');
+      const host = ($('#dnsHost')?.value || '').trim();
+      const type = $('#dnsType')?.value || 'A';
+      const provider = $('#dnsProvider')?.value || 'default';
+      controller?.abort();
+      controller = new AbortController();
+      const signal = controller.signal;
+      setBusy(button, true, 'Looking up…');
+      try {
+        if (!host) throw dnsFailure('invalid-host');
+        if (!validDnsHost(host)) throw dnsFailure('invalid-host');
+        const data = await lookupDnsBrowserFirst(host, type, provider, signal);
+        const display = publicDnsResult(data, host, type);
+        const answers = display.answers;
+        cards.replaceChildren();
+        if (answers.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'w-full min-w-0 overflow-hidden rounded-2xl border border-line bg-soft px-4 py-4 text-left';
+          const caption = document.createElement('span');
+          caption.className = 'mb-1 block text-xs font-bold uppercase tracking-wide text-muted';
+          caption.textContent = display.status_name || 'No answers';
+          const strong = document.createElement('strong');
+          strong.className = 'block min-w-0 break-all whitespace-pre-wrap text-base leading-snug tracking-tight text-ink sm:text-lg';
+          strong.textContent = 'No records returned for this query.';
+          empty.append(caption, strong);
+          cards.append(empty);
+        } else {
+          for (const answer of answers) {
+            const card = document.createElement('div');
+            card.className = 'w-full min-w-0 overflow-hidden rounded-2xl border border-line bg-soft px-4 py-4 text-left';
+            const caption = document.createElement('span');
+            caption.className = 'mb-1 block text-xs font-bold uppercase tracking-wide text-muted';
+            caption.textContent = `${answer.type || type} · TTL ${answer.ttl ?? 0}`;
+            const strong = document.createElement('strong');
+            strong.className = 'block min-w-0 break-all whitespace-pre-wrap text-base leading-snug tracking-tight text-ink sm:text-lg';
+            strong.textContent = String(answer.data || '');
+            const name = document.createElement('small');
+            name.className = 'mt-1 block break-all text-xs text-muted';
+            name.textContent = String(answer.name || host);
+            card.append(caption, strong, name);
+            cards.append(card);
+          }
+        }
+        setResult($('#output'), JSON.stringify(display, null, 2));
+      } catch (error) {
+        if (error && error.name === 'AbortError') return;
+        showFriendlyError(dnsErrorMessage(error));
+      } finally {
+        if (!signal.aborted) setBusy(button, false);
+      }
+    };
+
+    $('#run').onclick = run;
+    bindSubmit(run, ['#dnsHost', '#dnsType', '#dnsProvider']);
+    $('#copy').onclick = () => copyText($('#output').textContent, $('#copy'));
+  }
+
   function initApiExampleCopy() {
     document.querySelectorAll('[data-copy-target]').forEach((button) => {
       button.addEventListener('click', () => {
@@ -1409,6 +2653,10 @@
     ip: initIp,
     secret: initSecret,
     encryption: initEncryption,
+    'hash-validation': initHashValidation,
+    cron: initCron,
+    ssh: initSsh,
+    dns: initDns,
   };
 
   try {

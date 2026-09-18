@@ -15,4 +15,8 @@
   <url><loc>https://tools.rajujha.dev/ip</loc></url>
   <url><loc>https://tools.rajujha.dev/secret</loc></url>
   <url><loc>https://tools.rajujha.dev/encryption</loc></url>
+  <url><loc>https://tools.rajujha.dev/hash-validation</loc></url>
+  <url><loc>https://tools.rajujha.dev/cron</loc></url>
+  <url><loc>https://tools.rajujha.dev/ssh</loc></url>
+  <url><loc>https://tools.rajujha.dev/dns</loc></url>
 </urlset>
