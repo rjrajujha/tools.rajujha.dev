@@ -9,8 +9,9 @@ PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tool
 - Clean URLs for every utility
 - Browser-first processing whenever it is safe
 - JSON APIs for scripting (GET on all endpoints; POST also for hash, hash-validation, base64, encryption, and SSH)
-- No cookies, accounts, localStorage, sessionStorage, or analytics
+- No cookies, accounts, sessionStorage, or analytics. `localStorage` stores only the theme preference, and only after the user toggles it
 - Security headers, CSP, and blocked access to sensitive files
+- Light/dark theme with a header toggle; first visit follows the system preference
 - Application rate limiting on expensive APIs (20 requests / 60 seconds by default)
 - `/health` for uptime checks
 
@@ -18,24 +19,24 @@ PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tool
 
 | Tool | Route | Where it runs | API |
 |---|---|---|---|
-| Password Generator | `/password` | Browser + optional API | `GET /api/password` |
-| Hash | `/hash` | Browser for SHA-2; API for MD5, SHA-1, bcrypt, all | `GET` / `POST /api/hash` |
-| Timestamp | `/timestamp` | Browser clock + optional API | `GET /api/timestamp` |
-| JSON Decoder | `/json` | Browser only | — |
-| UUID Generator | `/uuid` | Browser Web Crypto + optional API | `GET /api/uuid` |
+| DNS Lookup | `/dns` | Browser DoH first; API fallback | `GET /api/dns` |
 | QR Code Generator | `/qr` | Browser only, local library | — |
-| Regex Tester | `/regex` | Browser Web Worker | — |
-| Base64 | `/base64` | Browser + optional API | `GET` / `POST /api/base64` |
-| JWT Decoder | `/jwt` | Browser only | — |
-| User-Agent Parser | `/user-agent` | Browser + optional API | `GET /api/user-agent` |
-| Markdown Preview | `/markdown` | Browser only | — |
 | IP Checker | `/ip` | Server-observed `REMOTE_ADDR` | `GET /api/ip` |
-| Secret Generator | `/secret` | Browser Web Crypto + optional API | `GET /api/secret` |
 | Encrypt-Decrypt | `/encryption` | Browser Web Crypto only in the UI | `GET` / `POST /api/encryption` |
+| Password Generator | `/password` | Browser + optional API | `GET /api/password` |
+| Secret Generator | `/secret` | Browser Web Crypto + optional API | `GET /api/secret` |
+| UUID Generator | `/uuid` | Browser Web Crypto + optional API | `GET /api/uuid` |
+| Timestamp | `/timestamp` | Browser clock + optional API | `GET /api/timestamp` |
+| Base64 | `/base64` | Browser + optional API | `GET` / `POST /api/base64` |
+| JSON Decoder | `/json` | Browser only | — |
+| Markdown Preview | `/markdown` | Browser only | — |
+| User-Agent Parser | `/user-agent` | Browser + optional API | `GET /api/user-agent` |
+| JWT Decoder | `/jwt` | Browser only | — |
 | Hash Validation | `/hash-validation` | Browser for SHA/MD5; API for bcrypt | `GET` / `POST /api/hash-validation` |
+| Hash | `/hash` | Browser for SHA-2; API for MD5, SHA-1, bcrypt, all | `GET` / `POST /api/hash` |
+| Regex Tester | `/regex` | Browser Web Worker | — |
 | Cron Expression Builder | `/cron` | Browser only | — |
 | SSH Key Generator | `/ssh` | Browser Web Crypto; API fallback for passphrases | `GET` / `POST /api/ssh` |
-| DNS Lookup | `/dns` | Browser DoH first; API fallback | `GET /api/dns` |
 
 ## Architecture
 
@@ -45,6 +46,7 @@ PHP 8.1+, HTML, compiled Tailwind CSS, and a small JavaScript surface. Most tool
 
 - Output is escaped in PHP. Markdown allows only safe `http(s)` links
 - CSP is same-origin except DNS-over-HTTPS (`cloudflare-dns.com`, `dns.google`); no third-party scripts or analytics
+- First visit follows `prefers-color-scheme`. Toggling the header sun/moon control writes only `localStorage.theme` (`light` or `dark`)
 - Sensitive APIs (`hash`, `hash-validation`, `base64`, `encryption`) accept GET and POST. Prefer POST — secrets and plaintext in GET URLs can be logged or cached
 - Encrypt-Decrypt runs locally in the browser when Web Crypto is available; the UI does not silently fall back to the API
 - bcrypt and encryption iteration ceilings come from `config.json`
@@ -199,6 +201,7 @@ php -l api.php
 php -l router.php
 find app -name '*.php' -exec php -l {} \;
 node --check assets/app.js
+node --check assets/theme.js
 npm run build
 php tests/run.php
 php -S 127.0.0.1:8080 router.php

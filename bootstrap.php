@@ -78,7 +78,7 @@ function app_config_defaults(): array
 {
     return [
         'author' => 'Raju Jha',
-        'version' => '1.1.2',
+        'version' => '1.1.3',
         'security' => [
             'bcrypt_cost' => 12,
             'max_bcrypt_cost' => 14,
@@ -558,10 +558,11 @@ function render_error_page(int $status, string $title, string $message, ?Throwab
     $safeTitle = esc($title);
     $safeMessage = esc($message);
     $cssVersion = (string) @filemtime(APP_ROOT . '/assets/app.css');
+    $themeJsVersion = (string) @filemtime(APP_ROOT . '/assets/theme.js');
     $detail = '';
 
     if (app_debug() && $throwable instanceof Throwable) {
-        $detail = '<pre class="mt-8 overflow-x-auto rounded-2xl border border-line bg-white p-4 text-left text-xs leading-relaxed text-ink">'
+        $detail = '<pre class="mt-8 overflow-x-auto rounded-2xl border border-line bg-card p-4 text-left text-xs leading-relaxed text-ink">'
             . esc($throwable->getMessage() . "\n\n" . $throwable->getFile() . ':' . $throwable->getLine() . "\n\n" . $throwable->getTraceAsString())
             . '</pre>';
     }
@@ -574,8 +575,10 @@ function render_error_page(int $status, string $title, string $message, ?Throwab
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="robots" content="noindex">
   <meta name="theme-color" content="#f3f6f0">
+  <meta name="color-scheme" content="light dark">
   <title>{$safeTitle} · tools.rajujha.dev</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="/assets/theme.js?v={$themeJsVersion}"></script>
   <link rel="stylesheet" href="/assets/app.css?v={$cssVersion}">
 </head>
 <body class="min-h-dvh">
@@ -586,8 +589,8 @@ function render_error_page(int $status, string $title, string $message, ?Throwab
       <h1 class="mt-4 text-3xl font-bold tracking-tight text-ink sm:text-5xl">{$safeTitle}</h1>
       <p class="mt-4 max-w-xl text-sm leading-relaxed text-muted sm:text-base">{$safeMessage}</p>
       <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-start">
-        <a href="/" class="inline-flex min-h-11 items-center justify-center rounded-xl bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-ink/90">Back to tools</a>
-        <a href="https://github.com/rjrajujha/tools.rajujha.dev/issues" class="inline-flex min-h-11 items-center justify-center rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink transition hover:border-leaf/40 hover:bg-soft" target="_blank" rel="noopener noreferrer">Report an issue</a>
+        <a href="/" class="inline-flex min-h-11 items-center justify-center rounded-xl bg-ink px-4 py-2.5 text-sm font-semibold text-inverse transition hover:bg-ink/90">Back to tools</a>
+        <a href="https://github.com/rjrajujha/tools.rajujha.dev/issues" class="inline-flex min-h-11 items-center justify-center rounded-xl border border-line bg-card px-4 py-2.5 text-sm font-semibold text-ink transition hover:border-leaf/40 hover:bg-soft" target="_blank" rel="noopener noreferrer">Report an issue</a>
       </div>
       {$detail}
     </main>

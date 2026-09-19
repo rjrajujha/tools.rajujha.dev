@@ -1,5 +1,5 @@
   <dialog id="searchModal" class="m-0 max-h-none w-full max-w-none border-0 bg-transparent p-4 pt-[12vh] open:grid open:justify-items-center" aria-labelledby="searchTitle">
-    <div class="w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-white shadow-xl shadow-ink/10">
+    <div class="w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-card shadow-xl shadow-ink/10">
       <div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
         <strong id="searchTitle" class="text-sm font-bold text-ink">Search tools</strong>
         <button type="button" class="<?= $iconBtn ?>" id="closeSearch" aria-label="Close search">

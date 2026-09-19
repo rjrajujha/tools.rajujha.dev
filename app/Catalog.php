@@ -39,24 +39,24 @@ final class Catalog
     public static function tools(): array
     {
         return [
-            ['password', 'Password Generator', 'Create strong random passwords'],
-            ['hash', 'Hash', 'Hash text with SHA, MD5 or bcrypt'],
-            ['timestamp', 'Timestamp', 'Convert Unix time and see current UTC'],
-            ['json', 'JSON Decoder', 'Format, validate and inspect JSON'],
-            ['uuid', 'UUID Generator', 'Generate UUID v4 identifiers locally'],
+            ['dns', 'DNS Lookup', 'Look up A, AAAA, MX, TXT, CNAME and NS'],
             ['qr', 'QR Code Generator', 'Create QR codes in your browser'],
-            ['regex', 'Regex Tester', 'Test regular expressions safely'],
-            ['base64', 'Base64', 'Encode and decode Base64 text'],
-            ['jwt', 'JWT Decoder', 'Decode JWT header and payload locally'],
-            ['user-agent', 'User-Agent Parser', 'Inspect browser and device information'],
-            ['markdown', 'Markdown Preview', 'Preview Markdown instantly in your browser'],
             ['ip', 'IP Checker', 'See the IP address observed by this server'],
-            ['secret', 'Secret Generator', 'Generate cryptographic random secrets'],
             ['encryption', 'Encrypt-Decrypt', 'Encrypt and decrypt text with a secret key'],
+            ['password', 'Password Generator', 'Create strong random passwords'],
+            ['secret', 'Secret Generator', 'Generate cryptographic random secrets'],
+            ['uuid', 'UUID Generator', 'Generate UUID v4 identifiers locally'],
+            ['timestamp', 'Timestamp', 'Convert Unix time and see current UTC'],
+            ['base64', 'Base64', 'Encode and decode Base64 text'],
+            ['json', 'JSON Decoder', 'Format, validate and inspect JSON'],
+            ['markdown', 'Markdown Preview', 'Preview Markdown instantly in your browser'],
+            ['user-agent', 'User-Agent Parser', 'Inspect browser and device information'],
+            ['jwt', 'JWT Decoder', 'Decode JWT header and payload locally'],
             ['hash-validation', 'Hash Validation', 'Check a string against SHA, MD5 or bcrypt'],
+            ['hash', 'Hash', 'Hash text with SHA, MD5 or bcrypt'],
+            ['regex', 'Regex Tester', 'Test regular expressions safely'],
             ['cron', 'Cron Expression Builder', 'Build and preview cron schedules'],
             ['ssh', 'SSH Key Generator', 'Create Ed25519 and RSA keys locally'],
-            ['dns', 'DNS Lookup', 'Look up A, AAAA, MX, TXT, CNAME and NS'],
         ];
     }
 

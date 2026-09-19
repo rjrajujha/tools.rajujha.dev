@@ -1,5 +1,6 @@
       <label class="<?= $label ?>" for="dnsHost">Host</label>
       <input id="dnsHost" class="<?= $field ?>" autocomplete="off" spellcheck="false" placeholder="example.com">
+      <p class="mt-1 text-xs text-muted" data-error-for="dnsHost" hidden></p>
       <label class="<?= $label ?> mt-4" for="dnsType">Type</label>
       <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
         <select id="dnsType" class="<?= $controlSelect ?> sm:min-w-0 sm:flex-1">

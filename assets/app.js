@@ -710,7 +710,7 @@
       err.textContent = message || '';
       err.hidden = !message;
       err.classList.toggle('font-medium', Boolean(message));
-      err.classList.toggle('text-ink', Boolean(message));
+      err.classList.toggle('text-danger', Boolean(message));
     }
   }
 
@@ -850,8 +850,8 @@
 
     if (type === 'ccupi') {
       const bank = $('#qrCcBank')?.value || 'sbi';
-      const mobileBanks = bank === 'axis' || bank === 'au';
-      if (mobileBanks) {
+      const mobileLast4Banks = bank === 'axis' || bank === 'au' || bank === 'icici';
+      if (mobileLast4Banks) {
         const mobile = digitsOnly($('#qrCcMobile')?.value || '');
         const last4 = digitsOnly($('#qrCcLast4')?.value || '');
         let status = '';
@@ -864,12 +864,17 @@
         if (last4.length === 0) {
           status = status || 'Last 4 card digits are required';
         } else if (last4.length !== 4) {
-          setFieldError('qrCcLast4', 'Enter the last 4 card digits');
-          status = status || 'Enter the last 4 card digits';
+          const last4Message = bank === 'icici' ? 'Enter the last 4 digits of the card' : 'Enter the last 4 card digits';
+          setFieldError('qrCcLast4', last4Message);
+          status = status || last4Message;
         }
         if (status) return { ok: false, payload: '', status };
-        const pa = bank === 'axis' ? `CC.91${mobile}${last4}@axisbank` : `AUCC${mobile}${last4}@AUBANK`;
-        return { ok: true, payload: `upi://pay?pa=${normalizeUpiPa(pa)}`, status: '' };
+        const formats = {
+          axis: `CC.91${mobile}${last4}@axisbank`,
+          au: `aucc${mobile}${last4}@aubank`,
+          icici: `ccpay.${mobile}${last4}@icici`,
+        };
+        return { ok: true, payload: `upi://pay?pa=${normalizeUpiPa(formats[bank] || '')}`, status: '' };
       }
 
       const card = digitsOnly($('#qrCcCard')?.value || '');
@@ -882,10 +887,9 @@
         return { ok: false, payload: '', status: `Enter a ${length}-digit card number` };
       }
       const formats = {
-        sbi: `Sbicard${card}@SBI`,
-        icici: `ccpay${card}@icici`,
+        sbi: `sbicard${card}@sbi`,
         idfc: `${card}.cc@idfcbank`,
-        amex: `AEBC${card}@SC`,
+        amex: `aebc${card}@sc`,
       };
       return { ok: true, payload: `upi://pay?pa=${normalizeUpiPa(formats[bank] || '')}`, status: '' };
     }
@@ -939,9 +943,13 @@
       if ($('#qrUpiVpaFields')) $('#qrUpiVpaFields').hidden = accountMode;
       if ($('#qrUpiAccountFields')) $('#qrUpiAccountFields').hidden = !accountMode;
       const bank = $('#qrCcBank')?.value || 'sbi';
-      const mobileBank = bank === 'axis' || bank === 'au';
-      if ($('#qrCcCardFields')) $('#qrCcCardFields').hidden = mobileBank;
-      if ($('#qrCcMobileFields')) $('#qrCcMobileFields').hidden = !mobileBank;
+      const mobileLast4Bank = bank === 'axis' || bank === 'au' || bank === 'icici';
+      if ($('#qrCcCardFields')) $('#qrCcCardFields').hidden = mobileLast4Bank;
+      if ($('#qrCcMobileFields')) $('#qrCcMobileFields').hidden = !mobileLast4Bank;
+      const last4Label = document.querySelector('label[for="qrCcLast4"]');
+      if (last4Label) last4Label.textContent = bank === 'icici' ? 'Last 4 Digits of Card' : 'Last 4 card digits';
+      if ($('#qrCcLast4')) $('#qrCcLast4').placeholder = bank === 'icici' ? 'Last 4 digits' : '1234';
+      if ($('#qrCcIciciHint')) $('#qrCcIciciHint').hidden = bank !== 'icici';
       if ($('#qrCcCard')) {
         $('#qrCcCard').placeholder = bank === 'amex' ? '15-digit card number' : '16-digit card number';
       }
@@ -991,11 +999,11 @@
       button.setAttribute('aria-checked', active ? 'true' : 'false');
       button.tabIndex = active ? 0 : -1;
       button.classList.toggle('bg-ink', active);
-      button.classList.toggle('text-white', active);
+      button.classList.toggle('text-inverse', active);
       button.classList.toggle('hover:bg-ink/90', active);
       button.classList.toggle('border', !active);
       button.classList.toggle('border-line', !active);
-      button.classList.toggle('bg-white', !active);
+      button.classList.toggle('bg-card', !active);
       button.classList.toggle('text-ink', !active);
       button.classList.toggle('hover:border-leaf/50', !active);
       button.classList.toggle('hover:bg-moss/80', !active);
@@ -2436,6 +2444,7 @@
       controller = new AbortController();
       const signal = controller.signal;
       setBusy(button, true, 'Looking up…');
+      setFieldError('dnsHost', '');
       try {
         if (!host) throw dnsFailure('invalid-host');
         if (!validDnsHost(host)) throw dnsFailure('invalid-host');
@@ -2474,6 +2483,7 @@
         setResult($('#output'), JSON.stringify(display, null, 2));
       } catch (error) {
         if (error && error.name === 'AbortError') return;
+        if (error && error.dnsCode === 'invalid-host') setFieldError('dnsHost', dnsErrorMessage(error));
         showFriendlyError(dnsErrorMessage(error));
       } finally {
         if (!signal.aborted) setBusy(button, false);

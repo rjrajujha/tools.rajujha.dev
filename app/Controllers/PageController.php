@@ -64,6 +64,7 @@ final class PageController
             'description' => $description,
             'cssVersion' => (string) @filemtime(APP_ROOT . '/assets/app.css'),
             'jsVersion' => (string) @filemtime(APP_ROOT . '/assets/app.js'),
+            'themeJsVersion' => (string) @filemtime(APP_ROOT . '/assets/theme.js'),
             'bcryptCost' => $security['bcrypt_cost'],
             'maxBcryptCost' => $security['max_bcrypt_cost'],
             'encIter' => $security['encryption_iterations'],

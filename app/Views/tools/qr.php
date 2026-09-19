@@ -152,11 +152,12 @@
             <input id="qrCcMobile" class="<?= $field ?>" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="10-digit mobile">
             <p class="mt-1 text-xs text-muted" data-error-for="qrCcMobile" hidden></p>
           </div>
-          <div>
+          <div id="qrCcLast4Wrap">
             <label class="<?= $label ?>" for="qrCcLast4">Last 4 card digits</label>
             <input id="qrCcLast4" class="<?= $field ?>" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="1234" maxlength="4">
             <p class="mt-1 text-xs text-muted" data-error-for="qrCcLast4" hidden></p>
           </div>
+          <p id="qrCcIciciHint" class="text-xs leading-relaxed text-muted" hidden>Enter the 10-digit mobile number and the last 4 digits of the card.</p>
         </div>
       </div>
 

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="description" content="<?= esc($description) ?>">
   <meta name="theme-color" content="#f3f6f0">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="tools.rajujha.dev">
@@ -20,10 +20,11 @@
   <link rel="apple-touch-icon" href="/favicon.svg">
   <link rel="manifest" href="/site.webmanifest">
   <title><?= esc($title) ?></title>
+  <script src="/assets/theme.js?v=<?= esc($themeJsVersion) ?>"></script>
   <link rel="stylesheet" href="/assets/app.css?v=<?= esc($cssVersion) ?>">
 </head>
 <body class="flex min-h-dvh flex-col overflow-x-hidden">
-  <a class="absolute left-4 top-0 z-50 -translate-y-full rounded-b-xl bg-ink px-4 py-2 text-sm font-semibold text-white focus:translate-y-0" href="#main">Skip to content</a>
+  <a class="absolute left-4 top-0 z-50 -translate-y-full rounded-b-xl bg-ink px-4 py-2 text-sm font-semibold text-inverse focus:translate-y-0" href="#main">Skip to content</a>
   <?php \App\View::render('partials/header', get_defined_vars()); ?>
   <?php \App\View::render('partials/search', get_defined_vars()); ?>
 
@@ -44,7 +45,7 @@
       <p class="mt-1 max-w-2xl text-sm leading-relaxed text-muted"><?= esc($toolDesc) ?></p>
     </section>
 
-    <section class="<?= $page === 'markdown' ? 'max-w-6xl' : 'max-w-3xl' ?> mx-auto min-w-0 overflow-x-hidden rounded-2xl border border-line bg-white p-4 shadow-xl shadow-ink/5 sm:rounded-3xl sm:p-7 lg:p-8" data-tool="<?= esc($page) ?>">
+    <section class="<?= $page === 'markdown' ? 'max-w-6xl' : 'max-w-3xl' ?> mx-auto min-w-0 overflow-x-hidden rounded-2xl border border-line bg-card p-4 shadow-xl shadow-ink/5 sm:rounded-3xl sm:p-7 lg:p-8" data-tool="<?= esc($page) ?>">
       <?php \App\View::render('tools/' . $page, get_defined_vars()); ?>
     </section>
     <?php \App\View::render('partials/api-docs', get_defined_vars()); ?>
@@ -52,7 +53,7 @@
   </main>
 
   <?php \App\View::render('partials/footer', get_defined_vars()); ?>
-  <div id="toast" class="pointer-events-none fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 z-40 -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white opacity-0 shadow-lg transition aria-hidden:opacity-0" role="status" aria-live="polite" aria-hidden="true"></div>
+  <div id="toast" class="pointer-events-none fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 z-40 -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-inverse opacity-0 shadow-lg transition aria-hidden:opacity-0" role="status" aria-live="polite" aria-hidden="true"></div>
   <script type="application/json" id="app-config"><?= json_encode(public_client_config(), JSON_UNESCAPED_SLASHES) ?></script>
   <?php if ($page === 'qr'): ?>
   <script src="/assets/vendor/qrcode-generator.js?v=<?= esc((string) @filemtime(APP_ROOT . '/assets/vendor/qrcode-generator.js')) ?>" defer></script>

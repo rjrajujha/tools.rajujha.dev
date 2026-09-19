@@ -185,6 +185,22 @@ assert_true(str_contains($home['body'], 'Cron Expression Builder'), 'home lists 
 assert_true(str_contains($home['body'], 'SSH Key Generator'), 'home lists SSH Key Generator');
 assert_true(str_contains($home['body'], 'DNS Lookup'), 'home lists DNS Lookup');
 assert_true(!str_contains($home['body'], 'Encrypt - Decrypt') && !str_contains($home['body'], 'Encrypt / Decrypt'), 'home does not use old encryption names');
+assert_true(str_contains($home['body'], 'id="themeToggle"'), 'header has a theme toggle');
+assert_true(
+    (bool) preg_match('/id="openSearch"[\s\S]*?id="themeToggle"[\s\S]*?GitHub repository/', $home['body']),
+    'theme toggle sits between Search and GitHub'
+);
+assert_true(str_contains($home['body'], 'name="color-scheme" content="light dark"'), 'pages advertise light and dark color-scheme');
+assert_true((bool) preg_match('/<script src="\/assets\/theme\.js\?v=/', $home['body']), 'theme boot script is loaded for stored preferences');
+if (preg_match('/aria-label="Available tools"[\s\S]*?<\/section>/', $home['body'], $section)) {
+    preg_match_all('/href="\/([a-z0-9-]+)"/', $section[0], $links);
+    assert_true(
+        ($links[1] ?? []) === ['dns', 'qr', 'ip', 'encryption', 'password', 'secret', 'uuid', 'timestamp', 'base64', 'json', 'markdown', 'user-agent', 'jwt', 'hash-validation', 'hash', 'regex', 'cron', 'ssh'],
+        'homepage tools are ordered least technical to most technical'
+    );
+} else {
+    assert_true(false, 'homepage tools section is present');
+}
 assert_true(header_has($home['headers'], 'content-security-policy', "default-src 'self'"), 'CSP defaults to same-origin');
 assert_true(header_has($home['headers'], 'content-security-policy', 'cloudflare-dns.com'), 'CSP allows Cloudflare DoH');
 assert_true(header_has($home['headers'], 'content-security-policy', 'dns.google'), 'CSP allows Google Public DNS DoH');
@@ -289,7 +305,24 @@ assert_true(
     (bool) preg_match('/function normalizeUpiPa\([^)]*\)\s*\{\s*return String\(value\)\.toLowerCase\(\)/', $appJs['body']),
     'QR CC UPI lowercases the entire pa value'
 );
+assert_true(
+    str_contains($appJs['body'], 'ccpay.${mobile}${last4}@icici'),
+    'ICICI CC UPI uses mobile digits plus the last 4 card digits'
+);
+assert_true(str_contains($appJs['body'], "bank === 'axis' || bank === 'au' || bank === 'icici'"), 'ICICI uses the mobile and last-4 fields');
+assert_true(!str_contains($appJs['body'], 'ccpay.${card}@icici'), 'ICICI CC UPI no longer uses the full card number as pa');
+assert_true(str_contains($appJs['body'], "rounded-xl bg-white"), 'QR canvas stays on a white background');
+assert_true(str_contains($appJs['body'], "ctx.fillStyle = '#ffffff'"), 'QR drawing fill stays white');
+assert_true(!str_contains($appJs['body'], 'localStorage'), 'app.js does not persist data in localStorage');
+assert_true(!str_contains($appJs['body'], 'sessionStorage'), 'app.js does not persist data in sessionStorage');
 assert_true(str_contains($appJs['body'], 'passphrase ? \'POST\' : \'GET\''), 'SSH passphrase uses POST');
+
+$themeJs = http_request('GET', $base . '/assets/theme.js');
+assert_true($themeJs['status'] === 200, 'GET /assets/theme.js');
+assert_true(str_contains($themeJs['body'], 'localStorage.getItem(STORAGE_KEY)'), 'theme boot reads a stored preference when present');
+assert_true(str_contains($themeJs['body'], 'localStorage.setItem(STORAGE_KEY, next)'), 'theme toggle persists only after an explicit choice');
+assert_true(str_contains($themeJs['body'], 'prefers-color-scheme: dark'), 'first visit follows the system theme');
+assert_true(!str_contains($themeJs['body'], 'sessionStorage'), 'theme script does not use sessionStorage');
 
 $health = http_request('GET', $base . '/health');
 assert_true($health['status'] === 200 && ($health['json']['status'] ?? null) === 'ok', 'GET /health');
@@ -350,6 +383,8 @@ assert_true(str_contains($qrPage['body'], 'id="qrFirstName"'), 'QR contact field
 assert_true(str_contains($qrPage['body'], 'id="qrUpiId"'), 'QR bank UPI fields are present');
 assert_true(str_contains($qrPage['body'], 'id="qrUpiAccountFields"') && str_contains($qrPage['body'], 'id="qrUpiVpaFields"'), 'QR bank UPI can hide the UPI ID for account+IFSC');
 assert_true(str_contains($qrPage['body'], 'id="qrCcBank"'), 'QR CC UPI fields are present');
+assert_true(str_contains($qrPage['body'], 'id="qrCcLast4Wrap"'), 'CC UPI last-4 field is present');
+assert_true(str_contains($qrPage['body'], 'id="qrCcIciciHint"'), 'ICICI helper text is present');
 assert_true(str_contains($qrPage['body'], 'id="qrDownloadPng"') && str_contains($qrPage['body'], 'id="qrDownloadSvg"'), 'QR download buttons are preserved');
 
 $ipPage = http_request('GET', $base . '/ip');
@@ -381,6 +416,8 @@ assert_true($dnsPage['status'] === 200 && str_contains($dnsPage['body'], 'DNS Lo
 assert_true(!str_contains($dnsPage['body'], 'id="dnsProvider"'), 'DNS has no provider dropdown');
 assert_true(str_contains($dnsPage['body'], 'id="dnsHost"') && str_contains($dnsPage['body'], 'id="dnsType"'), 'DNS keeps host and type controls');
 assert_true(str_contains($dnsPage['body'], 'id="dnsCards"'), 'DNS results use full-width cards');
+assert_true(str_contains($dnsPage['body'], 'data-error-for="dnsHost"'), 'DNS host has inline validation');
+assert_true(str_contains($dnsPage['body'], 'appearance-none'), 'native selects use the shared dropdown styling');
 assert_true(str_contains($dnsPage['body'], 'Cloudflare DNS-over-HTTPS first'), 'DNS page documents Cloudflare as the default');
 assert_true(str_contains($dnsPage['body'], 'Google Public DNS'), 'DNS page documents Google as the browser fallback');
 assert_true(str_contains($dnsPage['body'], "this site\u{2019}s API") || str_contains($dnsPage['body'], "this site's API"), 'DNS page documents the API as the final fallback');

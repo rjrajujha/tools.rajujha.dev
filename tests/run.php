@@ -121,7 +121,7 @@ assert_true(app_strict_bool(true) === true && app_strict_bool('1') === null, 'co
 
 $loaded = app_config();
 assert_true(is_string($loaded['version']) && $loaded['version'] !== '', 'loaded config version is present');
-assert_true($loaded['version'] === '1.1.2', 'loaded config version is 1.1.2');
+assert_true($loaded['version'] === '1.1.3', 'loaded config version is 1.1.3');
 assert_true($loaded['rate_limit']['requests'] === 20, 'loaded rate_limit.requests is 20');
 assert_true($loaded['client_ip']['trust_cloudflare'] === false, 'loaded trust_cloudflare is false');
 
